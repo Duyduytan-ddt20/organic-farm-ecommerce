@@ -6,11 +6,11 @@ Hệ thống thương mại điện tử mô hình **Single Farm** phục vụ q
 1. **Trần Duy Tân** (0306231064)
 2. **Nguyễn Lâm Nhật Tiến** (0306231074)
 3. **Nguyễn Đăng Khoa** (0306231034)
-4. **Trần Quang Danh**
-5. **Nguyễn Thành An**
+4. **Trần Quang Danh** (0306221310)
+5. **Nguyễn Thành An** (0306221302)
 
 ## Công nghệ sử dụng
-- **Backend (`backend/`):** Laravel 11 RESTful API, MySQL (InnoDB, utf8mb4), Laravel Storage
+- **Backend (`backend/`):** Laravel 12 RESTful API, MySQL (InnoDB, utf8mb4), Laravel Storage
 - **Frontend (`frontend/`):** React JS (Vite), Tailwind CSS (Mobile-first 390px – Desktop 1280px)
 
 ## Quy ước Git Flow & Commit    
