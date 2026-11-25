@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\Role;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -18,7 +19,10 @@ class CheckRole
             ], 403);
         }
 
-        if (!in_array($user->role?->role_name, $roles, true)) {
+        $roleName = Role::query()->whereKey($user->role_id)->value('role_name');
+
+
+        if (!in_array($roleName, $roles, true)) {
             return response()->json([
                 'message' => 'Bạn không có quyền thực hiện thao tác này.',
             ], 403);

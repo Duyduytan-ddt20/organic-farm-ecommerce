@@ -108,22 +108,22 @@ class AuthTest extends TestCase
         $sales = $this->tokenFor('Sales');
         $admin = $this->tokenFor('Admin');
 
-        $this->withToken($customer)->getJson('/api/v1/customer/dashboard')->assertOk();
-        $this->withToken($customer)->getJson('/api/v1/staff/dashboard')->assertForbidden();
-        $this->withToken($customer)->getJson('/api/v1/sales/dashboard')->assertForbidden();
-        $this->withToken($customer)->getJson('/api/v1/admin/dashboard')->assertForbidden();
+        $this->getAs($customer, '/api/v1/customer/dashboard')->assertOk();
+        $this->getAs($customer, '/api/v1/staff/dashboard')->assertForbidden();
+        $this->getAs($customer, '/api/v1/sales/dashboard')->assertForbidden();
+        $this->getAs($customer, '/api/v1/admin/dashboard')->assertForbidden();
 
-        $this->withToken($staff)->getJson('/api/v1/staff/dashboard')->assertOk();
-        $this->withToken($staff)->getJson('/api/v1/sales/dashboard')->assertForbidden();
-        $this->withToken($staff)->getJson('/api/v1/admin/dashboard')->assertForbidden();
+        $this->getAs($staff, '/api/v1/staff/dashboard')->assertOk();
+        $this->getAs($staff, '/api/v1/sales/dashboard')->assertForbidden();
+        $this->getAs($staff, '/api/v1/admin/dashboard')->assertForbidden();
 
-        $this->withToken($sales)->getJson('/api/v1/sales/dashboard')->assertOk();
-        $this->withToken($sales)->getJson('/api/v1/staff/dashboard')->assertForbidden();
+        $this->getAs($sales, '/api/v1/sales/dashboard')->assertOk();
+        $this->getAs($sales, '/api/v1/staff/dashboard')->assertForbidden();
 
-        $this->withToken($admin)->getJson('/api/v1/admin/dashboard')->assertOk();
-        $this->withToken($admin)->getJson('/api/v1/staff/dashboard')->assertOk();
-        $this->withToken($admin)->getJson('/api/v1/sales/dashboard')->assertOk();
-        $this->withToken($admin)->getJson('/api/v1/customer/dashboard')->assertOk();
+        $this->getAs($admin, '/api/v1/admin/dashboard')->assertOk();
+        $this->getAs($admin, '/api/v1/staff/dashboard')->assertOk();
+        $this->getAs($admin, '/api/v1/sales/dashboard')->assertOk();
+        $this->getAs($admin, '/api/v1/customer/dashboard')->assertOk();
     }
 
     public function test_protected_routes_require_a_token(): void
@@ -145,6 +145,13 @@ class AuthTest extends TestCase
     private function tokenFor(string $roleName): string
     {
         return $this->user($roleName)->createToken('test')->plainTextToken;
+    }
+
+    private function getAs(string $token, string $uri)
+    {
+        app('auth')->forgetGuards();
+
+        return $this->withToken($token)->getJson($uri);
     }
 
     /**
