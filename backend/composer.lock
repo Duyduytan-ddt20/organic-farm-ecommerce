@@ -1484,7 +1484,8 @@
                 "issues": "https://github.com/laravel/sanctum/issues",
                 "source": "https://github.com/laravel/sanctum"
             },
-            "time": "2026-11-11T14:11:40+00:00"
+            "time": "2026-11-11T14:11:40+00:00",
+            "published-time": "2026-11-17T15:20:05+00:00"
         },
         {
             "name": "laravel/serializable-closure",

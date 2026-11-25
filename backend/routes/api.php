@@ -34,4 +34,12 @@ Route::prefix('v1')->group(function () {
             Route::get('/dashboard', [RoleAccessController::class, 'admin']);
         });
     });
+    Route::apiResource('categories', CategoryController::class);
+
+    Route::apiResource('products', ProductController::class);
+    Route::patch('products/{id}/status', [ProductController::class, 'toggleStatus']);
+
+    Route::get('batches/expiring-soon', [BatchController::class, 'expiringSoon']);
+    Route::apiResource('batches', BatchController::class);
+    Route::patch('batches/{id}/discount', [BatchController::class, 'applyDiscount']);
 });
