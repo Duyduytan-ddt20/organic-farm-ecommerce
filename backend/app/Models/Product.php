@@ -10,13 +10,13 @@ class Product extends Model
 {
     use Hasfactory;
     protected $fillable = [
-        'category_id', 'ten_san_pham', 'hinh_anh',
-        'gia_ban_co_ban', 'don_vi_tinh', 'trang_thai',
+        'category_id', 'name', 'slug', 'description', 'image_path',
+        'base_price', 'unit', 'is_active',
     ];
 
     protected $casts = [
-        'gia_ban_co_ban' => 'decimal:2',
-        'trang_thai'     => 'boolean',
+        'base_price' => 'decimal:2',
+        'is_active' => 'boolean',
     ];
 
     public function category(): BelongsTo

@@ -23,6 +23,22 @@ export default function Header({ subtitle = 'KHÁCH HÀNG', title = 'Organic Far
         <nav className="flex flex-wrap items-center gap-2">
           {user ? (
             <>
+              {(user.role?.role_name === 'Customer' || user.role?.role_name === 'Admin') ? (
+                <Link
+                  to="/mua-sam"
+                  className="inline-flex min-h-10 items-center rounded-xl px-4 text-sm font-semibold"
+                >
+                  Mua hàng
+                </Link>
+              ) : null}
+              {(user.role?.role_name === 'Sales' || user.role?.role_name === 'Admin') ? (
+                <Link
+                  to="/don-hang"
+                  className="inline-flex min-h-10 items-center rounded-xl px-4 text-sm font-semibold"
+                >
+                  Đơn hàng
+                </Link>
+              ) : null}
               {(user.role?.role_name === 'Staff' || user.role?.role_name === 'Admin') ? (
                 <Link
                   to="/quan-ly"

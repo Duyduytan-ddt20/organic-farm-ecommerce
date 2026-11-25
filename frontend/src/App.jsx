@@ -5,6 +5,8 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import TracePage from './pages/TracePage';
 import ManagementPage from './pages/ManagementPage';
+import ShopPage from './pages/ShopPage';
+import OrdersPage from './pages/OrdersPage';
 
 export default function App() {
   return (
@@ -15,6 +17,8 @@ export default function App() {
         <Route path="/dang-ky" element={<RegisterPage />} />
         <Route path="/truy-xuat/:qrToken" element={<TracePage />} />
         <Route path="/quan-ly" element={<ManagementPage />} />
+        <Route path="/mua-sam" element={<ShopPage />} />
+        <Route path="/don-hang" element={<OrdersPage />} />
       </Route>
     </Routes>
   );
