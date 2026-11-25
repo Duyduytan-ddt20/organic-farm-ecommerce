@@ -37,6 +37,8 @@ export default function ManagementPage() {
   const [batchId, setBatchId] = useState('');
   const [batch, setBatch] = useState(null);
   const [qrSvg, setQrSvg] = useState('');
+  const [farmingLogs, setFarmingLogs] = useState([]);
+  const [disposals, setDisposals] = useState([]);
   const [activeTab, setActiveTab] = useState('qr');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
@@ -53,6 +55,8 @@ export default function ManagementPage() {
     note: '',
     disposed_at: '',
   });
+  const [logImage, setLogImage] = useState(null);
+  const [disposalImage, setDisposalImage] = useState(null);
 
   useEffect(() => {
     if (user && !permitted) navigate('/');
@@ -75,6 +79,13 @@ export default function ManagementPage() {
       const batchResponse = await axiosClient.get(`/batches/${batchId.trim()}`);
       const loadedBatch = batchResponse.data.data;
       setBatch(loadedBatch);
+
+      const [logsResponse, disposalsResponse] = await Promise.all([
+        axiosClient.get(`/batches/${loadedBatch.id}/farming-logs`).catch(() => ({ data: { data: [] } })),
+        axiosClient.get(`/batches/${loadedBatch.id}/disposals`).catch(() => ({ data: { data: [] } })),
+      ]);
+      setFarmingLogs(logsResponse.data.data ?? []);
+      setDisposals(disposalsResponse.data.data ?? []);
 
       try {
         const qrResponse = await axiosClient.get(`/batches/${loadedBatch.id}/qr`, {
@@ -111,13 +122,19 @@ export default function ManagementPage() {
     setErrors({});
 
     try {
-      await axiosClient.post(`/batches/${batch.id}/farming-logs`, {
-        activity: logForm.activity,
-        description: logForm.description.trim() === '' ? null : logForm.description.trim(),
-        performed_at: toApiDateTime(logForm.performed_at),
+      const formData = new FormData();
+      formData.append('activity', logForm.activity);
+      if (logForm.description.trim()) formData.append('description', logForm.description.trim());
+      formData.append('performed_at', toApiDateTime(logForm.performed_at));
+      if (logImage) formData.append('image', logImage);
+
+      const response = await axiosClient.post(`/batches/${batch.id}/farming-logs`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
+      setFarmingLogs((current) => [...current, response.data.data]);
       setMessage('Đã ghi nhật ký canh tác.');
       setLogForm({ activity: 'Gieo trồng', description: '', performed_at: '' });
+      setLogImage(null);
     } catch (error) {
       const parsed = apiError(error);
       setMessage(parsed.message);
@@ -134,11 +151,15 @@ export default function ManagementPage() {
     setErrors({});
 
     try {
-      const response = await axiosClient.post(`/batches/${batch.id}/disposals`, {
-        quantity: Number(disposalForm.quantity),
-        reason: disposalForm.reason,
-        note: disposalForm.note.trim() === '' ? null : disposalForm.note.trim(),
-        disposed_at: toApiDateTime(disposalForm.disposed_at),
+      const formData = new FormData();
+      formData.append('quantity', String(Number(disposalForm.quantity)));
+      formData.append('reason', disposalForm.reason);
+      if (disposalForm.note.trim()) formData.append('note', disposalForm.note.trim());
+      if (disposalForm.disposed_at) formData.append('disposed_at', toApiDateTime(disposalForm.disposed_at));
+      if (disposalImage) formData.append('image', disposalImage);
+
+      const response = await axiosClient.post(`/batches/${batch.id}/disposals`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
       });
       setBatch((current) => ({
         ...current,
@@ -147,6 +168,8 @@ export default function ManagementPage() {
       }));
       setMessage('Đã ghi nhận xuất hủy.');
       setDisposalForm({ quantity: '', reason: '', note: '', disposed_at: '' });
+      setDisposalImage(null);
+      setDisposals((current) => [response.data.data, ...current]);
     } catch (error) {
       const parsed = apiError(error);
       setMessage(parsed.message);
@@ -356,6 +379,15 @@ export default function ManagementPage() {
                       <span className="mt-1 block text-sm text-red-600">{errors.description}</span>
                     ) : null}
                   </label>
+                  <label className="block sm:col-span-2">
+                    <span className="mb-1.5 block text-sm font-medium text-slate-700">Ảnh minh chứng</span>
+                    <input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      onChange={(event) => setLogImage(event.target.files?.[0] ?? null)}
+                      className="block w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm file:mr-4 file:rounded-lg file:border-0 file:bg-emerald-50 file:px-3 file:py-2 file:font-semibold file:text-emerald-800"
+                    />
+                  </label>
                   <div className="sm:col-span-2">
                     <Button type="submit" disabled={loading}>
                       <Leaf size={18} />
@@ -363,6 +395,28 @@ export default function ManagementPage() {
                     </Button>
                   </div>
                 </form>
+              ) : null}
+
+              {activeTab === 'log' && farmingLogs.length > 0 ? (
+                <div className="mt-6 border-t border-slate-100 pt-5">
+                  <h3 className="font-bold text-slate-900">Lịch sử nhật ký canh tác</h3>
+                  <div className="mt-3 space-y-3">
+                    {[...farmingLogs].reverse().map((log) => (
+                      <article key={log.id} className="rounded-xl border border-slate-200 p-4">
+                        <p className="font-semibold text-slate-900">{log.activity}</p>
+                        {log.description ? <p className="mt-1 text-sm text-slate-600">{log.description}</p> : null}
+                        <p className="mt-2 text-xs text-slate-500">
+                          {log.performed_at} {log.staff?.full_name ? `· ${log.staff.full_name}` : ''}
+                        </p>
+                        {log.image_url ? (
+                          <a href={log.image_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-emerald-700">
+                            Xem ảnh minh chứng
+                          </a>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                </div>
               ) : null}
 
               {activeTab === 'disposal' ? (
@@ -415,6 +469,15 @@ export default function ManagementPage() {
                         <span className="mt-1 block text-sm text-red-600">{errors.note}</span>
                       ) : null}
                     </label>
+                    <label className="block">
+                      <span className="mb-1.5 block text-sm font-medium text-slate-700">Ảnh minh chứng</span>
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={(event) => setDisposalImage(event.target.files?.[0] ?? null)}
+                        className="block w-full rounded-xl border border-slate-300 bg-white px-4 py-3 text-sm file:mr-4 file:rounded-lg file:border-0 file:bg-red-50 file:px-3 file:py-2 file:font-semibold file:text-red-700"
+                      />
+                    </label>
                     <div className="sm:col-span-2">
                       <Button type="submit" variant="danger" disabled={loading}>
                         <PackageMinus size={18} />
@@ -423,6 +486,30 @@ export default function ManagementPage() {
                     </div>
                   </form>
                 )
+              ) : null}
+
+              {activeTab === 'disposal' && disposals.length > 0 ? (
+                <div className="mt-6 border-t border-slate-100 pt-5">
+                  <h3 className="font-bold text-slate-900">Lịch sử xuất hủy</h3>
+                  <div className="mt-3 space-y-3">
+                    {disposals.map((disposal) => (
+                      <article key={disposal.id} className="rounded-xl border border-slate-200 p-4">
+                        <p className="font-semibold text-slate-900">
+                          {formatQuantity(disposal.quantity)} {unit} - {disposal.reason}
+                        </p>
+                        {disposal.note ? <p className="mt-1 text-sm text-slate-600">{disposal.note}</p> : null}
+                        <p className="mt-2 text-xs text-slate-500">
+                          {disposal.disposed_at} {disposal.staff?.full_name ? `· ${disposal.staff.full_name}` : ''}
+                        </p>
+                        {disposal.image_url ? (
+                          <a href={disposal.image_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm font-semibold text-red-700">
+                            Xem ảnh minh chứng
+                          </a>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                </div>
               ) : null}
 
               {message ? (

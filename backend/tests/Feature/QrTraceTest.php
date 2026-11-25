@@ -54,7 +54,7 @@ class QrTraceTest extends TestCase
             ->get('/api/v1/batches/'.$batch->id.'/qr')
             ->assertOk()
             ->assertHeader('content-type', 'image/svg+xml')
-            ->assertSee('/api/v1/trace/token-one', false);
+            ->assertSee('/truy-xuat/token-one', false);
 
         $this->getJson('/api/v1/trace/token-one')
             ->assertOk()
@@ -118,6 +118,24 @@ class QrTraceTest extends TestCase
         $this->withToken($staff->createToken('test')->plainTextToken)
             ->getJson('/api/v1/batches/'.$batch->id.'/qr')
             ->assertUnprocessable();
+    }
+
+    public function test_creating_batch_generates_unique_qr_token(): void
+    {
+        $this->postJson('/api/v1/batches', [
+            'product_id' => 1,
+            'batch_code' => 'LO-AUTO',
+            'growing_location' => 'Nhà màng',
+            'harvested_at' => '2026-11-22',
+            'expires_at' => '2026-12-01 08:00:00',
+            'received_quantity' => 20,
+        ])
+            ->assertCreated()
+            ->assertJsonStructure(['data' => ['id', 'batch_code', 'qr_token']]);
+
+        $batch = Batch::where('batch_code', 'LO-AUTO')->firstOrFail();
+        $this->assertNotEmpty($batch->qr_token);
+        $this->assertSame(32, strlen($batch->qr_token));
     }
 
     public function test_customer_sales_and_guest_cannot_get_qr(): void

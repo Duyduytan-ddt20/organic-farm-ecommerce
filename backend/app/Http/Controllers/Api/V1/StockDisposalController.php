@@ -10,11 +10,25 @@ use App\Models\StockDisposal;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
+use Illuminate\Support\Facades\Storage;
 
 class StockDisposalController extends Controller
 {
     /** @var list<string> */
     private const DISPOSABLE_STATUSES = ['available', 'blocked', 'growing'];
+
+    public function index(Batch $batch): JsonResponse
+    {
+        $disposals = $batch->stockDisposals()
+            ->with('staff:id,full_name')
+            ->orderByDesc('disposed_at')
+            ->orderByDesc('id')
+            ->get();
+
+        return response()->json([
+            'data' => StockDisposalResource::collection($disposals),
+        ]);
+    }
 
     /**
      * Ghi phiếu xuất hủy và trừ tồn trong một transaction có khóa dòng lô.
@@ -43,17 +57,26 @@ class StockDisposalController extends Controller
                 ]);
             }
 
+            $imagePath = null;
+            if ($request->hasFile('image')) {
+                $imagePath = $request->file('image')->store('stock-disposals', 'public');
+            }
+
             $disposal = StockDisposal::query()->create([
                 'batch_id' => $locked->id,
                 'staff_id' => $request->user()->id,
                 'quantity' => $this->fromCents($requestedCents),
                 'reason' => $data['reason'],
                 'note' => $data['note'] ?? null,
-                'image_path' => null,
+                'image_path' => $imagePath,
                 'disposed_at' => $data['disposed_at'] ?? now(),
             ]);
 
-            $locked->available_quantity = $this->fromCents($availableCents - $requestedCents);
+            $remainingCents = $availableCents - $requestedCents;
+            $locked->available_quantity = $this->fromCents($remainingCents);
+            if ($remainingCents === 0 && $locked->status === 'available') {
+                $locked->status = 'closed';
+            }
             $locked->save();
 
             $disposal->setRelation('batch', $locked);

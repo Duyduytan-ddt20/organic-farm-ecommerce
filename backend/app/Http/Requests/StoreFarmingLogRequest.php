@@ -28,6 +28,7 @@ class StoreFarmingLogRequest extends FormRequest
             'activity' => ['required', 'string', Rule::in(['Gieo trồng', 'Chăm sóc', 'Thu hoạch'])],
             'description' => ['nullable', 'string'],
             'performed_at' => ['required', 'date'],
+            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
         ];
     }
 

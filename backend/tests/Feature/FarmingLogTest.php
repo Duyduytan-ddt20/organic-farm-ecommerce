@@ -7,6 +7,8 @@ use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class FarmingLogTest extends TestCase
@@ -101,6 +103,32 @@ class FarmingLogTest extends TestCase
                 ])
                 ->assertForbidden();
         }
+    }
+
+    public function test_farming_log_accepts_image_and_history_can_be_listed(): void
+    {
+        Storage::fake('public');
+        $batch = $this->batch('LO-IMAGE');
+        $staff = $this->user('Staff');
+        $token = $staff->createToken('test')->plainTextToken;
+
+        $this->withToken($token)
+            ->post('/api/v1/batches/'.$batch->id.'/farming-logs', [
+                'activity' => 'Chăm sóc',
+                'description' => 'Phun hữu cơ',
+                'performed_at' => '2026-11-26 08:00:00',
+                'image' => UploadedFile::fake()->createWithContent(
+                    'canh-tac.png',
+                    base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
+                ),
+            ])
+            ->assertCreated();
+
+        $this->assertNotNull($batch->farmingLogs()->first()->image_path);
+        $this->withToken($token)
+            ->getJson('/api/v1/batches/'.$batch->id.'/farming-logs')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
     }
 
     private function batch(string $code): Batch

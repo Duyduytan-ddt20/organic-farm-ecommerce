@@ -15,7 +15,7 @@ class QrGeneratorService
      */
     public function traceUrl(string $qrToken): string
     {
-        return rtrim((string) config('app.url'), '/').'/api/v1/trace/'.rawurlencode($qrToken);
+        return rtrim((string) config('app.frontend_url'), '/').'/truy-xuat/'.rawurlencode($qrToken);
     }
 
     /**
