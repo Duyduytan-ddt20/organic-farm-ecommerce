@@ -12,9 +12,15 @@ class CheckRole
     {
         $user = $request->user();
 
-        if (!$user || !$user->is_active || !in_array($user->role?->role_name, $roles, true)) {
+        if (!$user || !$user->is_active) {
             return response()->json([
-                'message' => 'Bạn không có quyền thực hiện thao tác này.'
+                'message' => 'Tài khoản đã bị khóa.',
+            ], 403);
+        }
+
+        if (!in_array($user->role?->role_name, $roles, true)) {
+            return response()->json([
+                'message' => 'Bạn không có quyền thực hiện thao tác này.',
             ], 403);
         }
 
