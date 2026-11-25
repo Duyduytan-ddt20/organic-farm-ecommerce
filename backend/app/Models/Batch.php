@@ -1,12 +1,13 @@
 <?php
 
 namespace App\Models;
-
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class Batch extends Model
 {
+    use Hasfactory;
     protected $fillable = [
         'product_id', 'ma_lo', 'ngay_thu_hoach', 'ngay_het_han',
         'so_luong_nhap', 'so_luong_ton', 'so_luong_hao_hut',
