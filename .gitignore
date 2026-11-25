@@ -1,0 +1,16 @@
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Backend
+/backend/vendor/
+/backend/node_modules/
+/backend/.env
+/backend/public/storage
+/backend/storage/*.key
+
+# Frontend
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.env
