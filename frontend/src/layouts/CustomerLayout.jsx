@@ -1,16 +1,14 @@
-import Header from '../components/Header';
+import { Outlet } from 'react-router-dom';
 import Footer from '../components/Footer';
+import Header from '../components/Header';
 
-export default function CustomerLayout({ children }) {
+export default function CustomerLayout() {
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
-      <Header
-        subtitle="KHÁCH HÀNG"
-        title="Nông sản từ nông trại"
-      />
+    <div className="flex min-h-screen flex-col bg-slate-50">
+      <Header subtitle="KHÁCH HÀNG" title="Nông sản từ nông trại" />
 
-      <main className="w-full max-w-7xl mx-auto flex-1 px-4 py-6 sm:px-6">
-        {children}
+      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6">
+        <Outlet />
       </main>
 
       <Footer />
