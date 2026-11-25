@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Batch;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\Storage;
 
 class TraceController extends Controller
 {
@@ -56,6 +57,7 @@ class TraceController extends Controller
                         'activity' => $log->activity,
                         'description' => $log->description,
                         'image_path' => $log->image_path,
+                        'image_url' => $log->image_path ? Storage::disk('public')->url($log->image_path) : null,
                         'performed_at' => $log->performed_at?->format('Y-m-d H:i:s'),
                         'staff' => $log->staff ? [
                             'id' => $log->staff->id,

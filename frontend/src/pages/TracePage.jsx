@@ -159,6 +159,13 @@ export default function TracePage() {
                 {log.description ? (
                   <p className="mt-1 text-sm leading-6 text-slate-600">{log.description}</p>
                 ) : null}
+                {log.image_url ? (
+                  <img
+                    src={log.image_url}
+                    alt={`Ảnh minh chứng ${log.activity}`}
+                    className="mt-3 max-h-64 w-full rounded-xl border border-slate-200 object-cover"
+                  />
+                ) : null}
                 <p className="mt-2 text-xs font-medium text-slate-500">
                   {formatDate(log.performed_at)}
                   {log.staff?.full_name ? ` · ${log.staff.full_name}` : ''}

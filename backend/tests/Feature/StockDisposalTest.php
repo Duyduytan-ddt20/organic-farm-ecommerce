@@ -7,6 +7,8 @@ use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Tests\TestCase;
 
 class StockDisposalTest extends TestCase
@@ -162,6 +164,33 @@ class StockDisposalTest extends TestCase
             ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['quantity']);
+    }
+
+    public function test_disposal_accepts_image_and_available_stock_can_be_closed(): void
+    {
+        Storage::fake('public');
+        $batch = $this->batch('LO-FULL-DISPOSE', 'available', 2);
+        $staff = $this->user('Staff');
+        $token = $staff->createToken('test')->plainTextToken;
+
+        $this->withToken($token)
+            ->post('/api/v1/batches/'.$batch->id.'/disposals', [
+                'quantity' => 2,
+                'reason' => 'Xuất hủy hết',
+                'image' => UploadedFile::fake()->createWithContent(
+                    'xuat-huy.png',
+                    base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
+                ),
+            ])
+            ->assertCreated()
+            ->assertJsonPath('data.available_quantity', '0.00')
+            ->assertJsonPath('data.status', 'closed');
+
+        $this->assertNotNull($batch->stockDisposals()->first()->image_path);
+        $this->withToken($token)
+            ->getJson('/api/v1/batches/'.$batch->id.'/disposals')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
     }
 
     private function batch(string $code, string $status, int $available): Batch

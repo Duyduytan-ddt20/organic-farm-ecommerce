@@ -45,7 +45,9 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('role:Staff,Admin')->group(function () {
             Route::get('/batches/{batch}/qr', [QrCodeController::class, 'show']);
+            Route::get('/batches/{batch}/farming-logs', [FarmingLogController::class, 'index']);
             Route::post('/batches/{batch}/farming-logs', [FarmingLogController::class, 'store']);
+            Route::get('/batches/{batch}/disposals', [StockDisposalController::class, 'index']);
             Route::post('/batches/{batch}/disposals', [StockDisposalController::class, 'store']);
         });
     });

@@ -7,20 +7,21 @@ use App\Models\Batch;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
+use Illuminate\Support\Str;
 
 class BatchController extends Controller
 {
     public function index(Request $request): JsonResponse
     {
-        $query = Batch::with('product:id,ten_san_pham,don_vi_tinh,gia_ban_co_ban')
-            ->orderBy('ngay_het_han', 'asc');
+        $query = Batch::with('product:id,name,unit,base_price')
+            ->orderBy('expires_at', 'asc');
 
         if ($request->filled('product_id')) {
             $query->where('product_id', $request->product_id);
         }
 
-        if ($request->filled('trang_thai')) {
-            $query->where('trang_thai', $request->trang_thai);
+        if ($request->filled('status') || $request->filled('trang_thai')) {
+            $query->where('status', $request->input('status', $request->input('trang_thai')));
         }
 
         return response()->json([
@@ -35,17 +36,17 @@ class BatchController extends Controller
         $today = Carbon::today();
         $thresholdDate = $today->copy()->addDays($days);
 
-        $batches = Batch::with('product:id,ten_san_pham,don_vi_tinh,gia_ban_co_ban')
-            ->where('trang_thai', 'active')
-            ->where('so_luong_ton', '>', 0)
-            ->whereDate('ngay_het_han', '>=', $today->toDateString())
-            ->whereDate('ngay_het_han', '<=', $thresholdDate->toDateString())
-            ->orderBy('ngay_het_han', 'asc')
+        $batches = Batch::with('product:id,name,unit,base_price')
+            ->where('status', '!=', 'closed')
+            ->where('available_quantity', '>', 0)
+            ->whereDate('expires_at', '>=', $today->toDateString())
+            ->whereDate('expires_at', '<=', $thresholdDate->toDateString())
+            ->orderBy('expires_at', 'asc')
             ->get()
             ->map(function ($batch) use ($today) {
-                $daysLeft = $today->diffInDays(Carbon::parse($batch->ngay_het_han), false);
-                $batch->so_ngay_con_lai = $daysLeft;
-                $batch->muc_canh_bao = $daysLeft <= 1 ? 'URGENT_RED' : 'WARNING_ORANGE';
+                $daysLeft = $today->diffInDays(Carbon::parse($batch->expires_at), false);
+                $batch->days_until_expiry = $daysLeft;
+                $batch->warning_level = $daysLeft <= 1 ? 'URGENT_RED' : 'WARNING_ORANGE';
                 return $batch;
             });
 
@@ -61,25 +62,42 @@ class BatchController extends Controller
     {
         $validated = $request->validate([
             'product_id'     => 'required|exists:products,id',
-            'ma_lo'          => 'nullable|string|max:50|unique:batches,ma_lo',
-            'ngay_thu_hoach' => 'required|date',
-            'ngay_het_han'   => 'required|date|after:ngay_thu_hoach',
-            'so_luong_nhap'  => 'required|numeric|min:0.1',
+            'batch_code'     => 'nullable|string|max:50|unique:batches,batch_code',
+            'ma_lo'          => 'nullable|string|max:50',
+            'ngay_thu_hoach' => 'nullable|date',
+            'harvested_at'   => 'nullable|date',
+            'ngay_het_han'   => 'nullable|date',
+            'expires_at'     => 'nullable|date',
+            'so_luong_nhap'  => 'nullable|numeric|min:0.1',
+            'received_quantity' => 'nullable|numeric|min:0.1',
             'phan_tram_giam' => 'nullable|integer|min:0|max:90',
+            'growing_location' => 'nullable|string|max:255',
         ]);
 
-        $maLo = $validated['ma_lo'] ?? ('LO-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -4)));
+        $batchCode = $validated['batch_code'] ?? $validated['ma_lo'] ?? null;
+        if ($batchCode && Batch::where('batch_code', $batchCode)->exists()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Mã lô đã tồn tại.',
+                'errors' => ['batch_code' => ['Mã lô đã tồn tại.']],
+            ], 422);
+        }
+
+        $batchCode = $batchCode ?? ('LO-' . date('Ymd') . '-' . strtoupper(substr(uniqid(), -4)));
+        $receivedQuantity = $validated['received_quantity'] ?? $validated['so_luong_nhap'] ?? 0;
+        $harvestedAt = $validated['harvested_at'] ?? $validated['ngay_thu_hoach'];
+        $expiresAt = $validated['expires_at'] ?? $validated['ngay_het_han'];
 
         $batch = Batch::create([
             'product_id'       => $validated['product_id'],
-            'ma_lo'            => $maLo,
-            'ngay_thu_hoach'   => $validated['ngay_thu_hoach'],
-            'ngay_het_han'     => $validated['ngay_het_han'],
-            'so_luong_nhap'    => $validated['so_luong_nhap'],
-            'so_luong_ton'     => $validated['so_luong_nhap'],
-            'so_luong_hao_hut' => 0,
-            'phan_tram_giam'   => $validated['phan_tram_giam'] ?? 0,
-            'trang_thai'       => 'active',
+            'batch_code'       => $batchCode,
+            'growing_location' => $validated['growing_location'] ?? 'Chưa cập nhật',
+            'harvested_at'     => $harvestedAt,
+            'expires_at'       => $expiresAt,
+            'received_quantity'=> $receivedQuantity,
+            'available_quantity'=> $receivedQuantity,
+            'status'           => 'growing',
+            'qr_token'         => Str::random(32),
         ]);
 
         return response()->json([
@@ -99,12 +117,15 @@ class BatchController extends Controller
     {
         $batch = Batch::findOrFail($id);
         $validated = $request->validate([
-            'product_id'     => 'required|exists:products,id',
-            'ngay_thu_hoach' => 'required|date',
-            'ngay_het_han'   => 'required|date|after:ngay_thu_hoach',
-            'so_luong_ton'   => 'required|numeric|min:0',
-            'phan_tram_giam' => 'required|integer|min:0|max:90',
-            'trang_thai'     => 'required|in:growing,active,expired,depleted',
+            'product_id' => 'sometimes|exists:products,id',
+            'batch_code' => 'sometimes|string|max:50|unique:batches,batch_code,' . $batch->id,
+            'growing_location' => 'sometimes|string|max:255',
+            'planted_at' => 'nullable|date',
+            'harvested_at' => 'nullable|date',
+            'expires_at' => 'nullable|date',
+            'received_quantity' => 'sometimes|numeric|min:0',
+            'available_quantity' => 'sometimes|numeric|min:0',
+            'status' => 'sometimes|in:growing,available,blocked,closed',
         ]);
 
         $batch->update($validated);
@@ -119,15 +140,9 @@ class BatchController extends Controller
     public function applyDiscount(Request $request, int $id): JsonResponse
     {
         $batch = Batch::findOrFail($id);
-        $validated = $request->validate([
-            'phan_tram_giam' => 'required|integer|min:0|max:90',
-        ]);
-
-        $batch->update(['phan_tram_giam' => $validated['phan_tram_giam']]);
-
         return response()->json([
-            'status'  => 'success',
-            'message' => "Đã áp dụng mức giảm {$validated['phan_tram_giam']}% cho lô {$batch->ma_lo}.",
+            'status' => 'success',
+            'message' => "Lô {$batch->batch_code} không áp dụng giảm giá riêng.",
             'data'    => $batch,
         ]);
     }

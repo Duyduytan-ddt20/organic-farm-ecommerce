@@ -40,6 +40,7 @@ class StoreStockDisposalRequest extends FormRequest
             'reason' => ['required', 'string', 'max:255'],
             'note' => ['nullable', 'string'],
             'disposed_at' => ['nullable', 'date'],
+            'image' => ['nullable', 'image', 'mimes:jpg,jpeg,png,webp', 'max:5120'],
         ];
     }
 
