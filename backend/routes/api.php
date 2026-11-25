@@ -1,13 +1,22 @@
 <?php
 
+use App\Http\Controllers\Api\BatchController;
+use App\Http\Controllers\Api\CategoryController;
+use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\FarmingLogController;
+use App\Http\Controllers\Api\V1\QrCodeController;
 use App\Http\Controllers\Api\V1\RoleAccessController;
+use App\Http\Controllers\Api\V1\StockDisposalController;
+use App\Http\Controllers\Api\V1\TraceController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
     Route::get('/health', fn () => response()->json([
         'status' => 'ok',
     ]));
+
+    Route::get('/trace/{qr_token}', [TraceController::class, 'show']);
 
     Route::prefix('auth')->group(function () {
         Route::post('/register', [AuthController::class, 'register'])->middleware('throttle:10,1');
@@ -32,6 +41,12 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('role:Admin')->prefix('admin')->group(function () {
             Route::get('/dashboard', [RoleAccessController::class, 'admin']);
+        });
+
+        Route::middleware('role:Staff,Admin')->group(function () {
+            Route::get('/batches/{batch}/qr', [QrCodeController::class, 'show']);
+            Route::post('/batches/{batch}/farming-logs', [FarmingLogController::class, 'store']);
+            Route::post('/batches/{batch}/disposals', [StockDisposalController::class, 'store']);
         });
     });
     Route::apiResource('categories', CategoryController::class);

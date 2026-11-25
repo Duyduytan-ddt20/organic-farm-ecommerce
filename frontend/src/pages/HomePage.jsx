@@ -41,7 +41,16 @@ export default function HomePage() {
             : 'Đăng ký tài khoản khách hàng hoặc đăng nhập để dùng các khu vực theo vai trò.'}
         </p>
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-          {user ? null : (
+          {user ? (
+            (roleName === 'Staff' || roleName === 'Admin') ? (
+              <Link
+                to="/quan-ly"
+                className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white"
+              >
+                Quản lý QR và lô hàng
+              </Link>
+            ) : null
+          ) : (
             <>
               <Link
                 to="/dang-nhap"
