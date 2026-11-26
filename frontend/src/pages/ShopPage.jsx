@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import Button from '../components/Button';
-import TextField from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
 import { apiError } from '../utils/apiError';
 
@@ -16,27 +15,26 @@ export default function ShopPage() {
   const [products, setProducts] = useState([]);
   const [cart, setCart] = useState({});
   const [orders, setOrders] = useState([]);
-  const [form, setForm] = useState({
-    recipient_name: user?.full_name || '',
-    recipient_phone: user?.phone || '',
-    delivery_address: '',
-  });
   const [message, setMessage] = useState('');
-  const [errors, setErrors] = useState({});
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!user) {
       navigate('/dang-nhap');
       return;
     }
+
     Promise.all([
       axiosClient.get('/products'),
       axiosClient.get('/customer/orders'),
     ]).then(([productsResponse, ordersResponse]) => {
-      setProducts(productsResponse.data.data ?? []);
-      setOrders(ordersResponse.data.data ?? []);
-    }).catch((error) => setMessage(apiError(error).message));
+      setProducts(productsResponse.data ?? []);
+      setOrders(ordersResponse.data ?? []);
+    }).catch((error) => {
+      setMessage(apiError(error).message);
+    }).finally(() => {
+      setLoading(false);
+    });
   }, [navigate, user]);
 
   function addProduct(product) {
@@ -56,39 +54,23 @@ export default function ShopPage() {
     }));
   }
 
-  async function checkout(event) {
-    event.preventEvent?.();
-    event.preventDefault();
-    setLoading(true);
-    setMessage('');
-    setErrors({});
-
+  function checkout() {
     const items = Object.values(cart)
       .filter((entry) => entry.quantity > 0)
-      .map((entry) => ({ product_id: entry.product.id, quantity: entry.quantity }));
+      .map((entry) => ({
+        product_id: entry.product.id,
+        name: entry.product.name,
+        unit: entry.product.unit,
+        unit_price: Number(entry.product.base_price),
+        quantity: entry.quantity,
+      }));
 
     if (items.length === 0) {
       setMessage('Vui lòng chọn ít nhất một sản phẩm.');
-      setLoading(false);
       return;
     }
 
-    try {
-      const response = await axiosClient.post('/customer/orders', {
-        ...form,
-        shipping_fee: 0,
-        items,
-      });
-      setOrders((current) => [response.data.data, ...current]);
-      setCart({});
-      setMessage('Tạo đơn hàng thành công. Đơn đang chờ nhân viên bán hàng xác nhận.');
-    } catch (error) {
-      const parsed = apiError(error);
-      setMessage(parsed.message);
-      setErrors(parsed.errors);
-    } finally {
-      setLoading(false);
-    }
+    navigate('/thanh-toan', { state: { cartItems: items } });
   }
 
   const cartEntries = Object.values(cart).filter((entry) => entry.quantity > 0);
@@ -110,14 +92,17 @@ export default function ShopPage() {
                 {formatMoney(product.base_price)} đ/{product.unit}
               </p>
               <Button type="button" variant="secondary" className="mt-4" onClick={() => addProduct(product)}>
-                Thêm vào đơn
+                Thêm vào giỏ
               </Button>
             </article>
           ))}
+          {!loading && products.length === 0 ? (
+            <p className="text-sm text-slate-500">Chưa có sản phẩm đang kinh doanh.</p>
+          ) : null}
         </div>
 
         <aside className="h-fit rounded-2xl bg-white p-5 shadow-sm">
-          <h2 className="text-xl font-bold text-slate-900">Thanh toán</h2>
+          <h2 className="text-xl font-bold text-slate-900">Giỏ hàng</h2>
           {cartEntries.length === 0 ? (
             <p className="mt-3 text-sm text-slate-500">Chưa có sản phẩm.</p>
           ) : (
@@ -130,7 +115,7 @@ export default function ShopPage() {
                   </div>
                   <input
                     type="number"
-                    min="0.01"
+                    min="0"
                     step="0.01"
                     value={entry.quantity}
                     onChange={(event) => updateQuantity(entry.product.id, event.target.value)}
@@ -141,20 +126,13 @@ export default function ShopPage() {
             </div>
           )}
 
-          <form onSubmit={checkout} className="mt-5 space-y-3" noValidate>
-            <TextField id="recipient_name" name="recipient_name" label="Người nhận" value={form.recipient_name} onChange={(event) => setForm({ ...form, recipient_name: event.target.value })} error={errors.recipient_name} />
-            <TextField id="recipient_phone" name="recipient_phone" label="Số điện thoại" value={form.recipient_phone} onChange={(event) => setForm({ ...form, recipient_phone: event.target.value })} error={errors.recipient_phone} />
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium">Địa chỉ giao hàng</span>
-              <textarea name="delivery_address" value={form.delivery_address} onChange={(event) => setForm({ ...form, delivery_address: event.target.value })} rows="3" className="w-full rounded-xl border border-slate-300 px-4 py-3" />
-              {errors.delivery_address ? <span className="text-sm text-red-600">{errors.delivery_address}</span> : null}
-            </label>
-            <p className="border-t border-slate-100 pt-3 text-lg font-bold">Tổng: {formatMoney(total)} đ</p>
-            {message ? <p className="rounded-xl bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{message}</p> : null}
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? 'Đang tạo đơn...' : 'Tạo đơn hàng'}
-            </Button>
-          </form>
+          <p className="mt-5 border-t border-slate-100 pt-3 text-lg font-bold">
+            Tạm tính: {formatMoney(total)} đ
+          </p>
+          {message ? <p className="mt-3 text-sm text-red-600">{message}</p> : null}
+          <Button type="button" className="mt-4 w-full" disabled={cartEntries.length === 0} onClick={checkout}>
+            Tiến hành thanh toán
+          </Button>
         </aside>
       </section>
 
@@ -168,7 +146,9 @@ export default function ShopPage() {
                   <p className="font-bold">{order.order_code}</p>
                   <p className="text-sm font-semibold text-emerald-800">{order.status}</p>
                 </div>
-                <p className="mt-1 text-sm text-slate-600">{order.items.map((item) => `${item.product_name}: ${item.quantity} ${item.unit_price}`).join('; ')}</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {order.items.map((item) => `${item.product_name}: ${item.quantity} ${item.unit_price}`).join('; ')}
+                </p>
                 {order.items.some((item) => item.allocated_batches?.length) ? (
                   <p className="mt-2 text-xs text-slate-500">
                     Phân bổ FEFO: {order.items.flatMap((item) => item.allocated_batches.map((detail) => `${detail.batch_code} (${detail.quantity})`)).join(', ')}
