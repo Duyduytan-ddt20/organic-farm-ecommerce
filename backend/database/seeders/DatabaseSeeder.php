@@ -2,6 +2,8 @@
 
 namespace Database\Seeders;
 
+use App\Models\Batch;
+use App\Models\Product;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -40,16 +42,25 @@ class DatabaseSeeder extends Seeder
             ['id' => 2, 'category_id' => 2, 'name' => 'Cà chua hữu cơ', 'slug' => 'ca-chua-huu-co', 'description' => 'Cà chua chín cây đạt chuẩn VietGAP.', 'base_price' => 38000, 'unit' => 'kg', 'is_active' => 1, 'created_at' => $now, 'updated_at' => $now],
         ]);
 
-        // 4. Batches (Đa dạng tình huống để test FEFO: hết hạn, sắp hết hạn, còn hạn xa, hết tồn)
+        // 4. Batches cố định để test FEFO (quá hạn, sắp hết hạn, còn hạn xa, hết tồn)
         DB::table('batches')->insert([
             // Lô quá hạn -> FEFO phải bỏ qua
             ['id' => 1, 'product_id' => 2, 'batch_code' => 'CC-EXPIRED', 'growing_location' => 'Nhà màng 1', 'planted_at' => '2026-09-20', 'harvested_at' => '2026-11-15', 'expires_at' => $now->copy()->subHours(5), 'received_quantity' => 20, 'available_quantity' => 10, 'status' => 'available', 'qr_token' => Str::random(32), 'created_at' => $now, 'updated_at' => $now],
+            // Lô hết tồn (available_quantity = 0) -> FEFO phải bỏ qua
+            ['id' => 2, 'product_id' => 2, 'batch_code' => 'CC-EMPTY', 'growing_location' => 'Nhà màng 1', 'planted_at' => '2026-09-22', 'harvested_at' => '2026-11-18', 'expires_at' => $now->copy()->addHours(20), 'received_quantity' => 15, 'available_quantity' => 0, 'status' => 'available', 'qr_token' => Str::random(32), 'created_at' => $now, 'updated_at' => $now],
             // Lô A (Hết hạn sau 30 giờ, còn 3kg) -> FEFO ưu tiên lấy hết 3kg này trước
-            ['id' => 2, 'product_id' => 2, 'batch_code' => 'CC-A01', 'growing_location' => 'Nhà màng 2', 'planted_at' => '2026-09-25', 'harvested_at' => '2026-11-22', 'expires_at' => $now->copy()->addHours(30), 'received_quantity' => 15, 'available_quantity' => 3, 'status' => 'available', 'qr_token' => Str::random(32), 'created_at' => $now, 'updated_at' => $now],
+            ['id' => 3, 'product_id' => 2, 'batch_code' => 'CC-A01', 'growing_location' => 'Nhà màng 2', 'planted_at' => '2026-09-25', 'harvested_at' => '2026-11-22', 'expires_at' => $now->copy()->addHours(30), 'received_quantity' => 15, 'available_quantity' => 3, 'status' => 'available', 'qr_token' => Str::random(32), 'created_at' => $now, 'updated_at' => $now],
             // Lô B (Hết hạn sau 5 ngày, còn 25kg) -> FEFO lấy phần còn thiếu từ lô này
-            ['id' => 3, 'product_id' => 2, 'batch_code' => 'CC-B02', 'growing_location' => 'Nhà màng 3', 'planted_at' => '2026-09-28', 'harvested_at' => '2026-11-24', 'expires_at' => $now->copy()->addDays(5), 'received_quantity' => 30, 'available_quantity' => 25, 'status' => 'available', 'qr_token' => Str::random(32), 'created_at' => $now, 'updated_at' => $now],
+            ['id' => 4, 'product_id' => 2, 'batch_code' => 'CC-B02', 'growing_location' => 'Nhà màng 3', 'planted_at' => '2026-09-28', 'harvested_at' => '2026-11-24', 'expires_at' => $now->copy()->addDays(5), 'received_quantity' => 30, 'available_quantity' => 25, 'status' => 'available', 'qr_token' => Str::random(32), 'created_at' => $now, 'updated_at' => $now],
             // Lô Xà lách A12 khớp dữ liệu mẫu Figma
-            ['id' => 4, 'product_id' => 1, 'batch_code' => 'A12', 'growing_location' => 'Khu A - Luống 12', 'planted_at' => '2026-10-05', 'harvested_at' => '2026-11-20', 'expires_at' => $now->copy()->addDays(3), 'received_quantity' => 50, 'available_quantity' => 45, 'status' => 'available', 'qr_token' => Str::random(32), 'created_at' => $now, 'updated_at' => $now],
+            ['id' => 5, 'product_id' => 1, 'batch_code' => 'A12', 'growing_location' => 'Khu A - Luống 12', 'planted_at' => '2026-10-05', 'harvested_at' => '2026-11-20', 'expires_at' => $now->copy()->addDays(3), 'received_quantity' => 50, 'available_quantity' => 45, 'status' => 'available', 'qr_token' => Str::random(32), 'created_at' => $now, 'updated_at' => $now],
         ]);
+
+        // 5. Tạo thêm dữ liệu mẫu bằng ProductFactory và BatchFactory
+        Product::factory(5)->create()->each(function (Product $product) {
+            Batch::factory()->create(['product_id' => $product->id]);
+            Batch::factory()->expiringSoon()->create(['product_id' => $product->id]);
+            Batch::factory()->outOfStock()->create(['product_id' => $product->id]);
+        });
     }
 }

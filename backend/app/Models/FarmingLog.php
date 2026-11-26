@@ -8,13 +8,20 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class FarmingLog extends Model
 {
     protected $fillable = [
-        'batch_id', 'farm_staff_id', 'hanh_dong',
-        'hinh_anh_minh_chung', 'thoi_gian', 'ghi_chu',
+        'batch_id',
+        'staff_id',
+        'activity',
+        'description',
+        'image_path',
+        'performed_at',
     ];
 
-    protected $casts = [
-        'thoi_gian' => 'datetime:Y-m-d H:i',
-    ];
+    protected function casts(): array
+    {
+        return [
+            'performed_at' => 'datetime:Y-m-d H:i:s',
+        ];
+    }
 
     public function batch(): BelongsTo
     {
@@ -23,6 +30,6 @@ class FarmingLog extends Model
 
     public function staff(): BelongsTo
     {
-        return $this->belongsTo(User::class, 'farm_staff_id');
+        return $this->belongsTo(User::class, 'staff_id');
     }
-}   
+}
