@@ -4,13 +4,19 @@ namespace App\Services\Geocoding;
 
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\Client\ConnectionException;
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Symfony\Component\HttpKernel\Exception\HttpException;
+use Throwable;
 
 class NominatimGeocodingProvider implements GeocodingProvider
 {
+    private const RETRY_ATTEMPTS = 2;
+
+    private const RETRY_DELAY_MILLISECONDS = 1100;
+
     public function geocode(string $address): ?array
     {
         $baseUrl = config('services.nominatim.base_url');
@@ -79,7 +85,12 @@ class NominatimGeocodingProvider implements GeocodingProvider
         int $timeout,
         string $address,
     ): Response {
-        $lockSeconds = max(15, $timeout + 5);
+        $lockSeconds = max(
+            15,
+            ($timeout * self::RETRY_ATTEMPTS)
+                + (int) ceil(self::RETRY_DELAY_MILLISECONDS / 1000)
+                + 5,
+        );
 
         try {
             return Cache::lock('shipping:nominatim:request-lock', $lockSeconds)
@@ -101,6 +112,18 @@ class NominatimGeocodingProvider implements GeocodingProvider
                         ->withHeaders(['User-Agent' => $userAgent])
                         ->connectTimeout($connectTimeout)
                         ->timeout($timeout)
+                        ->retry(
+                            self::RETRY_ATTEMPTS,
+                            self::RETRY_DELAY_MILLISECONDS,
+                            static fn (Throwable $exception): bool => (
+                                $exception instanceof ConnectionException
+                                || (
+                                    $exception instanceof RequestException
+                                    && $exception->response->serverError()
+                                )
+                            ),
+                            throw: false,
+                        )
                         ->get($url, [
                             'q' => $address,
                             'format' => 'jsonv2',

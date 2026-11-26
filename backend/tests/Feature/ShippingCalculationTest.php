@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Role;
 use App\Models\User;
+use App\Services\ShippingQuoteTokenService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\Client\Request as ClientRequest;
 use Illuminate\Support\Facades\Cache;
@@ -25,6 +26,7 @@ class ShippingCalculationTest extends TestCase
         config([
             'services.shipping.external_enabled' => true,
             'services.shipping.provider' => 'nominatim',
+            'services.shipping.routing_provider' => 'osrm',
             'services.shipping.farm_latitude' => 10.77197,
             'services.shipping.farm_longitude' => 106.70135,
             'services.shipping.rate_per_km' => 5000,
@@ -130,6 +132,58 @@ class ShippingCalculationTest extends TestCase
                 'delivery_address' => '100 Demo Street, Example District',
             ])
             ->assertStatus(504);
+
+        Http::assertSentCount(2);
+    }
+
+    public function test_geocoding_retries_a_transient_connection_failure(): void
+    {
+        Http::fake([
+            'https://nominatim.test/search*' => Http::sequence()
+                ->pushFailedConnection('simulated timeout')
+                ->push([
+                    ['lat' => '10.8', 'lon' => '106.75'],
+                ], 200),
+            'https://osrm.test/route/v1/driving/*' => Http::response([
+                'code' => 'Ok',
+                'routes' => [['distance' => 5234]],
+            ], 200),
+        ]);
+
+        $this->withToken($this->tokenFor('Customer'))
+            ->postJson('/api/v1/shipping/calculate', [
+                'delivery_address' => '100 Demo Street, Example District',
+            ])
+            ->assertOk()
+            ->assertJsonPath('distance_km', 5.234)
+            ->assertJsonPath('shipping_fee', 26170);
+
+        Http::assertSentCount(3);
+    }
+
+    public function test_geocoding_retries_a_transient_server_error(): void
+    {
+        Http::fake([
+            'https://nominatim.test/search*' => Http::sequence()
+                ->push(['error' => 'temporarily unavailable'], 503)
+                ->push([
+                    ['lat' => '10.8', 'lon' => '106.75'],
+                ], 200),
+            'https://osrm.test/route/v1/driving/*' => Http::response([
+                'code' => 'Ok',
+                'routes' => [['distance' => 5234]],
+            ], 200),
+        ]);
+
+        $this->withToken($this->tokenFor('Customer'))
+            ->postJson('/api/v1/shipping/calculate', [
+                'delivery_address' => '100 Demo Street, Example District',
+            ])
+            ->assertOk()
+            ->assertJsonPath('distance_km', 5.234)
+            ->assertJsonPath('shipping_fee', 26170);
+
+        Http::assertSentCount(3);
     }
 
     public function test_osrm_timeout_returns_gateway_timeout(): void
@@ -250,6 +304,122 @@ class ShippingCalculationTest extends TestCase
             ])
             ->assertStatus(503);
 
+        Http::assertNothingSent();
+    }
+
+    public function test_mock_providers_return_fixed_quote_without_external_calls_when_external_services_are_disabled(): void
+    {
+        config([
+            'services.shipping.external_enabled' => false,
+            'services.shipping.provider' => 'mock',
+            'services.shipping.routing_provider' => 'mock',
+        ]);
+
+        $role = Role::query()->where('role_name', 'Customer')->firstOrFail();
+        $customer = User::factory()->create(['role_id' => $role->id]);
+        $response = $this->withToken($customer->createToken('mock-quote-test')->plainTextToken)
+            ->postJson('/api/v1/shipping/calculate', [
+                'delivery_address' => '100 Mock Street, Example District',
+            ])
+            ->assertOk()
+            ->assertJsonPath('distance_km', 5.234)
+            ->assertJsonPath('shipping_rate', 5000)
+            ->assertJsonPath('shipping_fee', 26170)
+            ->assertJsonStructure(['quote_token']);
+
+        $verifiedQuote = app(ShippingQuoteTokenService::class)->verify(
+            $response->json('quote_token'),
+            '100 Mock Street, Example District',
+            (int) $customer->id,
+        );
+        $this->assertSame(26170, $verifiedQuote['shipping_fee']);
+        Http::assertNothingSent();
+    }
+
+    public function test_mock_providers_return_a_distinct_fixed_quote_for_the_second_fixture(): void
+    {
+        config([
+            'services.shipping.external_enabled' => false,
+            'services.shipping.provider' => 'mock',
+            'services.shipping.routing_provider' => 'mock',
+        ]);
+
+        $this->withToken($this->tokenFor('Customer'))
+            ->postJson('/api/v1/shipping/calculate', [
+                'delivery_address' => '200 Mock Street, Example District',
+            ])
+            ->assertOk()
+            ->assertJsonPath('distance_km', 8.5)
+            ->assertJsonPath('shipping_rate', 5000)
+            ->assertJsonPath('shipping_fee', 42500);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_mock_geocoder_does_not_fallback_for_unknown_addresses(): void
+    {
+        config([
+            'services.shipping.provider' => 'mock',
+            'services.shipping.routing_provider' => 'mock',
+        ]);
+
+        $this->withToken($this->tokenFor('Customer'))
+            ->postJson('/api/v1/shipping/calculate', [
+                'delivery_address' => 'Unknown Mock Address',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['delivery_address']);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_invalid_osrm_configuration_fails_before_geocoding(): void
+    {
+        Http::fake();
+        config(['services.osrm.base_url' => 'http://osrm.test']);
+
+        $this->withToken($this->tokenFor('Customer'))
+            ->postJson('/api/v1/shipping/calculate', [
+                'delivery_address' => '100 Demo Street, Example District',
+            ])
+            ->assertStatus(503)
+            ->assertJsonPath('message', 'Cấu hình URL OSRM chưa đầy đủ hoặc không hợp lệ.');
+
+        Http::assertNothingSent();
+    }
+
+    public function test_mock_router_returns_no_route_for_unlisted_fixture_coordinates(): void
+    {
+        config([
+            'services.shipping.provider' => 'mock',
+            'services.shipping.routing_provider' => 'mock',
+        ]);
+
+        $this->withToken($this->tokenFor('Customer'))
+            ->postJson('/api/v1/shipping/calculate', [
+                'delivery_address' => '999 Mock Street, No Route',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['delivery_address']);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_mock_providers_are_rejected_outside_local_and_testing(): void
+    {
+        config([
+            'services.shipping.provider' => 'mock',
+            'services.shipping.routing_provider' => 'mock',
+        ]);
+        $this->app->instance('env', 'production');
+
+        $this->withToken($this->tokenFor('Customer'))
+            ->postJson('/api/v1/shipping/calculate', [
+                'delivery_address' => '100 Mock Street, Example District',
+            ])
+            ->assertStatus(503);
+
+        $this->app->instance('env', 'testing');
         Http::assertNothingSent();
     }
 

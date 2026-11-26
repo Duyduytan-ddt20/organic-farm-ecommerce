@@ -3,27 +3,29 @@
 namespace App\Services;
 
 use App\Services\Geocoding\GeocodingProvider;
-use Illuminate\Http\Client\ConnectionException;
+use App\Services\Routing\RoutingProvider;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpKernel\Exception\HttpException;
 
 class ShippingService
 {
-    public function __construct(private readonly GeocodingProvider $geocoder) {}
+    public function __construct(
+        private readonly GeocodingProvider $geocoder,
+        private readonly RoutingProvider $router,
+    ) {}
 
     /**
      * @return array{distance_km: float, shipping_rate: int, shipping_fee: int}
      */
     public function calculate(string $deliveryAddress): array
     {
-        $this->ensureExternalServicesEnabled();
+        $this->ensureProvidersEnabled();
         $address = $this->normalizeAddress($deliveryAddress);
         $ttl = $this->cacheTtl();
         [$originLatitude, $originLongitude] = $this->originCoordinates();
         $rate = $this->shippingRate();
-        [$baseUrl, $connectTimeout, $timeout] = $this->routingConfig();
+        $this->router->assertReady();
         $provider = (string) config('services.shipping.provider');
         $cacheKey = 'shipping:geocode:'.$provider.':'.hash('sha256', mb_strtolower($address));
 
@@ -54,15 +56,20 @@ class ShippingService
             throw new HttpException(502, 'Dịch vụ geocoding trả tọa độ không hợp lệ.');
         }
 
-        $distanceMeters = $this->roadDistanceMeters(
+        $distanceMeters = $this->router->distanceMeters(
             $originLatitude,
             $originLongitude,
             (float) $latitude,
             (float) $longitude,
-            $baseUrl,
-            $connectTimeout,
-            $timeout,
         );
+        if ($distanceMeters === null) {
+            throw ValidationException::withMessages([
+                'delivery_address' => 'Không tìm thấy tuyến đường đến địa chỉ giao hàng.',
+            ]);
+        }
+        if (! is_finite($distanceMeters) || $distanceMeters < 0) {
+            throw new HttpException(502, 'Dịch vụ định tuyến trả khoảng cách không hợp lệ.');
+        }
 
         return [
             'distance_km' => round($distanceMeters / 1000, 3, PHP_ROUND_HALF_UP),
@@ -71,16 +78,24 @@ class ShippingService
         ];
     }
 
-    private function ensureExternalServicesEnabled(): void
+    private function ensureProvidersEnabled(): void
     {
-        if (! config('services.shipping.external_enabled')) {
-            throw new HttpException(503, 'Dịch vụ tính phí vận chuyển bên ngoài hiện đang tắt.');
+        $geocodingProvider = config('services.shipping.provider');
+        $routingProvider = config('services.shipping.routing_provider');
+        $usesMock = $geocodingProvider === 'mock' || $routingProvider === 'mock';
+
+        if ($usesMock && ! app()->environment(['local', 'testing'])) {
+            throw new HttpException(503, 'Mock shipping chỉ được dùng trong môi trường local và testing.');
         }
 
         if (
-            config('services.shipping.provider') === 'nominatim' &&
-            ! app()->environment(['local', 'testing'])
+            ($geocodingProvider !== 'mock' || $routingProvider !== 'mock') &&
+            ! config('services.shipping.external_enabled')
         ) {
+            throw new HttpException(503, 'Dịch vụ tính phí vận chuyển bên ngoài hiện đang tắt.');
+        }
+
+        if ($geocodingProvider === 'nominatim' && ! app()->environment(['local', 'testing'])) {
             throw new HttpException(503, 'Nominatim chỉ được bật trong môi trường phát triển và kiểm thử.');
         }
     }
@@ -144,106 +159,5 @@ class ShippingService
         }
 
         return $rate;
-    }
-
-    private function roadDistanceMeters(
-        float $originLatitude,
-        float $originLongitude,
-        float $destinationLatitude,
-        float $destinationLongitude,
-        string $baseUrl,
-        int $connectTimeout,
-        int $timeout,
-    ): float {
-        $url = rtrim($baseUrl, '/').'/route/v1/driving/'
-            .$this->coordinate($originLongitude).','.$this->coordinate($originLatitude).';'
-            .$this->coordinate($destinationLongitude).','.$this->coordinate($destinationLatitude);
-
-        try {
-            $response = Http::acceptJson()
-                ->connectTimeout($connectTimeout)
-                ->timeout($timeout)
-                ->get($url, ['overview' => 'false']);
-        } catch (ConnectionException $exception) {
-            throw new HttpException(504, 'Dịch vụ định tuyến đã hết thời gian chờ.', $exception);
-        }
-
-        if ($response->status() === 429) {
-            throw new HttpException(503, 'Dịch vụ định tuyến đang giới hạn yêu cầu. Vui lòng thử lại sau.');
-        }
-
-        if (! $response->successful()) {
-            throw new HttpException(502, 'Dịch vụ định tuyến không khả dụng.');
-        }
-
-        $result = $response->json();
-        if (! is_array($result)) {
-            throw new HttpException(502, 'Dịch vụ định tuyến trả dữ liệu không hợp lệ.');
-        }
-
-        if (in_array($result['code'] ?? null, ['NoRoute', 'NoSegment'], true)) {
-            throw ValidationException::withMessages([
-                'delivery_address' => 'Không tìm thấy tuyến đường đến địa chỉ giao hàng.',
-            ]);
-        }
-
-        $routes = $result['routes'] ?? null;
-        $route = is_array($routes) ? ($routes[0] ?? null) : null;
-        if (($result['code'] ?? null) !== 'Ok' || ! is_array($route) || ! array_key_exists('distance', $route)) {
-            throw new HttpException(502, 'Dịch vụ định tuyến trả tuyến đường không hợp lệ.');
-        }
-
-        $distance = $route['distance'];
-        if (! is_numeric($distance) || ! is_finite((float) $distance) || (float) $distance < 0) {
-            throw new HttpException(502, 'Dịch vụ định tuyến trả khoảng cách không hợp lệ.');
-        }
-
-        return (float) $distance;
-    }
-
-    /**
-     * @return array{0: string, 1: int, 2: int}
-     */
-    private function routingConfig(): array
-    {
-        $baseUrl = config('services.osrm.base_url');
-        if (! $this->isHttpsUrl($baseUrl)) {
-            throw new HttpException(503, 'Cấu hình URL OSRM chưa đầy đủ hoặc không hợp lệ.');
-        }
-
-        $host = strtolower((string) parse_url($baseUrl, PHP_URL_HOST));
-        if ($host === 'router.project-osrm.org' && ! app()->environment(['local', 'testing'])) {
-            throw new HttpException(503, 'OSRM Demo chỉ được sử dụng trong môi trường phát triển và kiểm thử.');
-        }
-
-        return [
-            $baseUrl,
-            $this->timeout('services.shipping.connect_timeout'),
-            $this->timeout('services.shipping.timeout'),
-        ];
-    }
-
-    private function coordinate(float $value): string
-    {
-        return rtrim(rtrim(number_format($value, 7, '.', ''), '0'), '.');
-    }
-
-    private function timeout(string $key): int
-    {
-        $value = config($key);
-        $timeout = filter_var($value, FILTER_VALIDATE_INT);
-
-        if ($timeout === false || $timeout < 1) {
-            throw new HttpException(503, 'Cấu hình timeout cho dịch vụ định tuyến không hợp lệ.');
-        }
-
-        return $timeout;
-    }
-
-    private function isHttpsUrl(mixed $url): bool
-    {
-        return is_string($url)
-            && filter_var($url, FILTER_VALIDATE_URL) !== false
-            && strtolower((string) parse_url($url, PHP_URL_SCHEME)) === 'https';
     }
 }

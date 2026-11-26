@@ -9,6 +9,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
 use Tests\TestCase;
 
 class OrderFefoTest extends TestCase
@@ -19,9 +20,12 @@ class OrderFefoTest extends TestCase
     {
         parent::setUp();
 
+        $this->withHeader('Idempotency-Key', Str::uuid()->toString());
+
         config([
             'services.shipping.external_enabled' => true,
             'services.shipping.provider' => 'nominatim',
+            'services.shipping.routing_provider' => 'osrm',
             'services.shipping.farm_latitude' => 10.77197,
             'services.shipping.farm_longitude' => 106.70135,
             'services.shipping.rate_per_km' => 5000,
@@ -238,6 +242,199 @@ class OrderFefoTest extends TestCase
             ->assertJsonValidationErrors(['items']);
     }
 
+    public function test_checkout_requires_an_idempotency_key_header(): void
+    {
+        $customer = $this->user('Customer');
+
+        $this->withToken($customer->createToken('test')->plainTextToken)
+            ->withHeader('Idempotency-Key', '')
+            ->postJson('/api/v1/customer/orders', $this->checkoutData())
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['idempotency_key']);
+
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('order_idempotency_keys', 0);
+    }
+
+    public function test_repeated_checkout_with_the_same_key_replays_the_original_order(): void
+    {
+        $this->fakeShipping();
+        $this->batch('CC-IDEMPOTENT', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+        $key = Str::uuid()->toString();
+        $data = $this->checkoutData($quoteToken);
+        $token = $customer->createToken('test')->plainTextToken;
+
+        $first = $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertCreated();
+        $replay = $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertCreated()
+            ->assertHeader('Idempotency-Replayed', 'true');
+
+        $this->assertSame($first->json('data.id'), $replay->json('data.id'));
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseCount('order_items', 1);
+        $this->assertDatabaseCount('order_idempotency_keys', 1);
+    }
+
+    public function test_overlapping_checkout_with_the_same_key_cannot_create_a_second_order(): void
+    {
+        $this->fakeShipping();
+        $this->batch('CC-IDEMPOTENCY-OVERLAP', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+        $key = Str::uuid()->toString();
+        $data = $this->checkoutData($quoteToken);
+        $token = $customer->createToken('test')->plainTextToken;
+        $overlappingResponse = null;
+        $overlapTriggered = false;
+
+        DB::listen(function ($query) use (&$overlapTriggered, &$overlappingResponse, $data, $key, $token): void {
+            if ($overlapTriggered || ! preg_match('/^insert into ["`]?order_idempotency_keys/i', $query->sql)) {
+                return;
+            }
+
+            $overlapTriggered = true;
+            $overlappingResponse = $this->withToken($token)
+                ->withHeader('Idempotency-Key', $key)
+                ->postJson('/api/v1/customer/orders', $data);
+        });
+
+        $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertCreated();
+
+        $this->assertTrue($overlapTriggered);
+        $this->assertNotNull($overlappingResponse);
+        $overlappingResponse->assertStatus(503)->assertHeader('Retry-After', '1');
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseCount('order_items', 1);
+        $this->assertDatabaseCount('order_idempotency_keys', 1);
+
+        $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertCreated()
+            ->assertHeader('Idempotency-Replayed', 'true');
+        $this->assertDatabaseCount('orders', 1);
+    }
+
+    public function test_reusing_an_idempotency_key_with_different_checkout_data_returns_conflict(): void
+    {
+        $this->fakeShipping();
+        $this->batch('CC-IDEMPOTENCY-CONFLICT', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+        $key = Str::uuid()->toString();
+        $data = $this->checkoutData($quoteToken);
+        $token = $customer->createToken('test')->plainTextToken;
+
+        $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertCreated();
+
+        $data['items'][0]['quantity'] = 2;
+        $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertConflict();
+
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseCount('order_items', 1);
+    }
+
+    public function test_failed_order_transaction_does_not_keep_an_idempotency_record_and_can_be_retried(): void
+    {
+        $this->fakeShipping();
+        $this->batch('CC-IDEMPOTENCY-RETRY', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+        $key = Str::uuid()->toString();
+        $data = $this->checkoutData($quoteToken);
+        $token = $customer->createToken('test')->plainTextToken;
+
+        DB::table('products')->where('id', 1)->update(['is_active' => 0]);
+        $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['items']);
+
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('order_items', 0);
+        $this->assertDatabaseCount('order_idempotency_keys', 0);
+
+        DB::table('products')->where('id', 1)->update(['is_active' => 1]);
+        $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertCreated();
+
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseCount('order_idempotency_keys', 1);
+    }
+
+    public function test_successful_checkout_can_be_replayed_after_its_quote_expires(): void
+    {
+        $this->fakeShipping();
+        $this->batch('CC-IDEMPOTENCY-EXPIRED-QUOTE', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+        $key = Str::uuid()->toString();
+        $data = $this->checkoutData($quoteToken);
+        $token = $customer->createToken('test')->plainTextToken;
+
+        $first = $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertCreated();
+
+        $this->travel(601)->seconds();
+        $replay = $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertCreated()
+            ->assertHeader('Idempotency-Replayed', 'true');
+
+        $this->assertSame($first->json('data.id'), $replay->json('data.id'));
+        $this->assertDatabaseCount('orders', 1);
+    }
+
+    public function test_another_customer_cannot_replay_an_idempotency_key_or_quote_from_a_different_customer(): void
+    {
+        $this->fakeShipping();
+        $this->batch('CC-IDEMPOTENCY-USER-SCOPE', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $otherCustomer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+        $key = Str::uuid()->toString();
+        $data = $this->checkoutData($quoteToken);
+        $token = $customer->createToken('test')->plainTextToken;
+
+        $this->withToken($token)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertCreated();
+
+        app('auth')->forgetGuards();
+        $this->withToken($otherCustomer->createToken('test')->plainTextToken)
+            ->withHeader('Idempotency-Key', $key)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['quote_token']);
+
+        $this->assertDatabaseCount('orders', 1);
+        $this->assertDatabaseHas('orders', ['user_id' => $customer->id]);
+        $this->assertDatabaseMissing('orders', ['user_id' => $otherCustomer->id]);
+    }
+
     private function fakeShipping(float $distanceMeters = 5234): void
     {
         Http::fake([
@@ -297,6 +494,7 @@ class OrderFefoTest extends TestCase
         $this->assertDatabaseCount('orders', 0);
         $this->assertDatabaseCount('order_items', 0);
         $this->assertDatabaseCount('order_details', 0);
+        $this->assertDatabaseCount('order_idempotency_keys', 0);
         $this->assertSame('10.00', number_format((float) $batch->refresh()->available_quantity, 2, '.', ''));
     }
 
