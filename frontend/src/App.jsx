@@ -1,7 +1,10 @@
+import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
 import CustomerLayout from './layouts/CustomerLayout';
 import Button from './components/Button';
+import ProductDetail from './pages/ProductDetail';
+import TraceabilityPage from './pages/TraceabilityPage';
 
-export default function App() {
+function HomePage() {
   return (
     <CustomerLayout>
       <section className="rounded-2xl bg-white p-5 shadow-sm sm:p-8">
@@ -18,7 +21,7 @@ export default function App() {
           lô thu hoạch và tra cứu nhật ký canh tác.
         </p>
 
-        <div className="mt-6">
+        <div className="mt-6 flex flex-wrap gap-3">
           <Button
             onClick={() => {
               document
@@ -28,6 +31,13 @@ export default function App() {
           >
             Xem nội dung dự án
           </Button>
+
+          <Link
+            to="/products/1"
+            className="inline-flex items-center rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-800"
+          >
+            Xem chi tiết sản phẩm mẫu
+          </Link>
         </div>
       </section>
 
@@ -56,5 +66,17 @@ export default function App() {
         </article>
       </section>
     </CustomerLayout>
+  );
+}
+
+export default function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/products/:id" element={<ProductDetail />} />
+        <Route path="/trace/:ma_lo" element={<TraceabilityPage />} />
+      </Routes>
+    </BrowserRouter>
   );
 }

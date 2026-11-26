@@ -25,4 +25,8 @@ class Batch extends Model
     {
         return $this->belongsTo(Product::class);
     }
+    public function farmingLogs(): \Illuminate\Database\Eloquent\Relations\HasMany
+{
+    return $this->hasMany(FarmingLog::class)->orderBy('thoi_gian', 'asc');
+}
 }

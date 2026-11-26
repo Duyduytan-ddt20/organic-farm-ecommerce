@@ -142,4 +142,17 @@ class BatchController extends Controller
             'message' => 'Đã xóa lô hàng.',
         ]);
     }
+    // GET /api/v1/trace/{ma_lo} (Công khai khi quét mã QR)
+public function traceByCode(string $maLo): JsonResponse
+{
+    $batch = Batch::with([
+        'product.category',
+        'farmingLogs.staff:id,ho_ten',
+    ])->where('ma_lo', $maLo)->firstOrFail();
+
+    return response()->json([
+        'status' => 'success',
+        'data'   => $batch,
+    ]);
+}
 }
