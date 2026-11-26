@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\QrCodeController;
 use App\Http\Controllers\Api\V1\RoleAccessController;
 use App\Http\Controllers\Api\V1\StockDisposalController;
 use App\Http\Controllers\Api\V1\TraceController;
+use App\Http\Controllers\Api\V1\OrderController;
 use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
@@ -29,6 +30,8 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('role:Customer,Admin')->prefix('customer')->group(function () {
             Route::get('/dashboard', [RoleAccessController::class, 'customer']);
+            Route::get('/orders', [OrderController::class, 'customerIndex']);
+            Route::post('/orders', [OrderController::class, 'store']);
         });
 
         Route::middleware('role:Staff,Admin')->prefix('staff')->group(function () {
@@ -37,6 +40,8 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('role:Sales,Admin')->prefix('sales')->group(function () {
             Route::get('/dashboard', [RoleAccessController::class, 'sales']);
+            Route::get('/orders', [OrderController::class, 'salesIndex']);
+            Route::post('/orders/{order}/confirm', [OrderController::class, 'confirm']);
         });
 
         Route::middleware('role:Admin')->prefix('admin')->group(function () {

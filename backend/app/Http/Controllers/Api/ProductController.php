@@ -7,6 +7,7 @@ use App\Models\Product;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Carbon\Carbon;
+use Illuminate\Support\Str;
 
 class ProductController extends Controller
 {
@@ -16,17 +17,17 @@ class ProductController extends Controller
 
         $query = Product::with('category')
             ->withSum(['batches as tong_ton_kha_dung' => function ($q) use ($today) {
-                $q->where('trang_thai', 'active')
-                  ->where('so_luong_ton', '>', 0)
-                  ->whereDate('ngay_het_han', '>', $today);
-            }], 'so_luong_ton');
+                $q->where('status', 'available')
+                  ->where('available_quantity', '>', 0)
+                  ->whereDate('expires_at', '>', $today);
+            }], 'available_quantity');
 
         if ($request->filled('category_id')) {
             $query->where('category_id', $request->category_id);
         }
 
         if ($request->filled('search')) {
-            $query->where('ten_san_pham', 'like', '%' . $request->search . '%');
+            $query->where('name', 'like', '%' . $request->search . '%');
         }
 
         return response()->json([
@@ -39,12 +40,17 @@ class ProductController extends Controller
     {
         $validated = $request->validate([
             'category_id'    => 'required|exists:categories,id',
-            'ten_san_pham'   => 'required|string|max:150',
-            'hinh_anh'       => 'nullable|string|max:255',
-            'gia_ban_co_ban' => 'required|numeric|min:0',
-            'don_vi_tinh'    => 'required|string|max:20',
-            'trang_thai'     => 'boolean',
+            'name'           => 'required|string|max:150',
+            'slug'           => 'nullable|string|max:180|unique:products,slug',
+            'description'    => 'nullable|string',
+            'image_path'     => 'nullable|string|max:255',
+            'base_price'     => 'required|numeric|min:0',
+            'unit'           => 'required|string|max:20',
+            'is_active'      => 'boolean',
         ]);
+
+        $validated['slug'] = $validated['slug'] ?? Str::slug($validated['name']).'-'.Str::lower(Str::random(5));
+        $validated['is_active'] = $validated['is_active'] ?? true;
 
         $product = Product::create($validated);
 
@@ -60,10 +66,10 @@ class ProductController extends Controller
         $today = Carbon::today()->toDateString();
 
         $product = Product::with(['category', 'batches' => function ($q) use ($today) {
-            $q->where('trang_thai', 'active')
-              ->where('so_luong_ton', '>', 0)
-              ->whereDate('ngay_het_han', '>', $today)
-              ->orderBy('ngay_het_han', 'asc');
+            $q->where('status', 'available')
+              ->where('available_quantity', '>', 0)
+              ->whereDate('expires_at', '>', $today)
+              ->orderBy('expires_at', 'asc');
         }])->findOrFail($id);
 
         return response()->json([
@@ -76,12 +82,14 @@ class ProductController extends Controller
     {
         $product = Product::findOrFail($id);
         $validated = $request->validate([
-            'category_id'    => 'required|exists:categories,id',
-            'ten_san_pham'   => 'required|string|max:150',
-            'hinh_anh'       => 'nullable|string|max:255',
-            'gia_ban_co_ban' => 'required|numeric|min:0',
-            'don_vi_tinh'    => 'required|string|max:20',
-            'trang_thai'     => 'required|boolean',
+            'category_id' => 'sometimes|exists:categories,id',
+            'name' => 'sometimes|string|max:150',
+            'slug' => 'sometimes|string|max:180|unique:products,slug,'.$id,
+            'description' => 'nullable|string',
+            'image_path' => 'nullable|string|max:255',
+            'base_price' => 'sometimes|numeric|min:0',
+            'unit' => 'sometimes|string|max:20',
+            'is_active' => 'sometimes|boolean',
         ]);
 
         $product->update($validated);
@@ -97,10 +105,10 @@ class ProductController extends Controller
     {
         $product = Product::findOrFail($id);
         $validated = $request->validate([
-            'trang_thai' => 'required|boolean',
+            'is_active' => 'required|boolean',
         ]);
 
-        $product->update(['trang_thai' => $validated['trang_thai']]);
+        $product->update(['is_active' => $validated['is_active']]);
 
         return response()->json([
             'status'  => 'success',

@@ -42,14 +42,23 @@ export default function HomePage() {
         </p>
         <div className="mt-6 flex flex-col gap-3 sm:flex-row">
           {user ? (
-            (roleName === 'Staff' || roleName === 'Admin') ? (
-              <Link
-                to="/quan-ly"
-                className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white"
-              >
-                Quản lý QR và lô hàng
-              </Link>
-            ) : null
+            <>
+              {(roleName === 'Customer' || roleName === 'Admin') ? (
+                <Link to="/mua-sam" className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white">
+                  Mua nông sản
+                </Link>
+              ) : null}
+              {(roleName === 'Staff' || roleName === 'Admin') ? (
+                <Link to="/quan-ly" className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white">
+                  Quản lý QR và lô hàng
+                </Link>
+              ) : null}
+              {(roleName === 'Sales' || roleName === 'Admin') ? (
+                <Link to="/don-hang" className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white">
+                  Xác nhận đơn hàng
+                </Link>
+              ) : null}
+            </>
           ) : (
             <>
               <Link
