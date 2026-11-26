@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Order;
 use App\Models\Product;
 use App\Services\FefoAllocationService;
+use App\Services\ShippingQuoteTokenService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -14,25 +15,34 @@ use Illuminate\Validation\ValidationException;
 
 class OrderController extends Controller
 {
-    public function store(Request $request, FefoAllocationService $fefo): JsonResponse
-    {
+    public function store(
+        Request $request,
+        FefoAllocationService $fefo,
+        ShippingQuoteTokenService $quoteTokens,
+    ): JsonResponse {
         $data = $request->validate([
             'recipient_name' => ['required', 'string', 'max:100'],
             'recipient_phone' => ['required', 'string', 'max:20'],
             'delivery_address' => ['required', 'string', 'max:500'],
-            'shipping_fee' => ['nullable', 'numeric', 'min:0'],
+            'quote_token' => ['required', 'string', 'max:8192'],
             'items' => ['required', 'array', 'min:1'],
             'items.*.product_id' => ['required', 'integer', 'exists:products,id'],
             'items.*.quantity' => ['required', 'numeric', 'gt:0', 'regex:/^\d+(\.\d{1,2})?$/'],
         ]);
 
-        $order = DB::transaction(function () use ($request, $data, $fefo): Order {
-            $shippingFeeCents = $this->toCents($data['shipping_fee'] ?? 0);
+        $shippingQuote = $quoteTokens->verify(
+            $data['quote_token'],
+            $data['delivery_address'],
+            (int) $request->user()->getAuthIdentifier(),
+        );
+        $shippingFeeCents = $this->toCents($shippingQuote['shipping_fee']);
+
+        $order = DB::transaction(function () use ($request, $data, $fefo, $shippingFeeCents): Order {
             $totalCents = $shippingFeeCents;
 
             $order = Order::query()->create([
                 'user_id' => $request->user()->id,
-                'order_code' => 'ORD-' . now()->format('YmdHis') . '-' . strtoupper(Str::random(6)),
+                'order_code' => 'ORD-'.now()->format('YmdHis').'-'.strtoupper(Str::random(6)),
                 'order_type' => 'retail',
                 'recipient_name' => $data['recipient_name'],
                 'recipient_phone' => $data['recipient_phone'],
@@ -48,7 +58,7 @@ class OrderController extends Controller
                     ->where('is_active', true)
                     ->first();
 
-                if (!$product) {
+                if (! $product) {
                     throw ValidationException::withMessages([
                         'items' => 'Sản phẩm không còn được kinh doanh.',
                     ]);
@@ -67,6 +77,7 @@ class OrderController extends Controller
             }
 
             $order->update(['total_amount' => $this->fromCents($totalCents)]);
+
             return $order;
         });
 
@@ -169,7 +180,7 @@ class OrderController extends Controller
     private function toCents(mixed $value): int
     {
         $normalized = trim((string) $value);
-        if (!preg_match('/^-?\d+(\.\d+)?$/', $normalized)) {
+        if (! preg_match('/^-?\d+(\.\d+)?$/', $normalized)) {
             $normalized = number_format((float) $value, 2, '.', '');
         }
         $negative = str_starts_with($normalized, '-');
@@ -177,6 +188,7 @@ class OrderController extends Controller
         [$whole, $fraction] = array_pad(explode('.', $normalized, 2), 2, '0');
         $fraction = substr(str_pad($fraction, 2, '0'), 0, 2);
         $cents = ((int) $whole * 100) + (int) $fraction;
+
         return $negative ? -$cents : $cents;
     }
 
@@ -184,6 +196,7 @@ class OrderController extends Controller
     {
         $negative = $cents < 0;
         $cents = abs($cents);
+
         return ($negative ? '-' : '').intdiv($cents, 100).'.'.str_pad((string) ($cents % 100), 2, '0', STR_PAD_LEFT);
     }
 }

@@ -6,7 +6,9 @@ use App\Models\Batch;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class OrderFefoTest extends TestCase
@@ -16,6 +18,23 @@ class OrderFefoTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        config([
+            'services.shipping.external_enabled' => true,
+            'services.shipping.provider' => 'nominatim',
+            'services.shipping.farm_latitude' => 10.77197,
+            'services.shipping.farm_longitude' => 106.70135,
+            'services.shipping.rate_per_km' => 5000,
+            'services.shipping.geocode_cache_ttl' => 3600,
+            'services.shipping.quote_ttl' => 600,
+            'services.shipping.connect_timeout' => 1,
+            'services.shipping.timeout' => 2,
+            'services.nominatim.base_url' => 'https://nominatim.test',
+            'services.nominatim.user_agent' => 'OrganicFarmEcommerceTest/1.0',
+            'services.osrm.base_url' => 'https://osrm.test',
+        ]);
+        Cache::flush();
+        Http::preventStrayRequests();
 
         foreach (['Customer', 'Staff', 'Sales', 'Admin'] as $roleName) {
             Role::query()->create(['role_name' => $roleName]);
@@ -45,23 +64,26 @@ class OrderFefoTest extends TestCase
 
     public function test_customer_can_checkout_and_sales_confirm_allocates_fefo(): void
     {
+        $this->fakeShipping();
         $first = $this->batch('CC-A01', 3, '2026-12-01');
         $second = $this->batch('CC-B02', 25, '2026-12-10');
         $customer = $this->user('Customer');
         $sales = $this->user('Sales');
+        $quoteToken = $this->quoteToken($customer);
 
         $create = $this->withToken($customer->createToken('test')->plainTextToken)
-            ->postJson('/api/v1/customer/orders', [
-                'recipient_name' => 'Khách Hàng',
-                'recipient_phone' => '0900000000',
-                'delivery_address' => 'Hà Nội',
-                'shipping_fee' => 30000,
-                'items' => [['product_id' => 1, 'quantity' => 5]],
-            ])
+            ->postJson('/api/v1/customer/orders', $this->checkoutData($quoteToken, 26170, 5))
             ->assertCreated()
-            ->assertJsonPath('data.status', 'pending');
+            ->assertJsonPath('data.status', 'pending')
+            ->assertJsonPath('data.shipping_fee', '26170.00')
+            ->assertJsonPath('data.total_amount', '216170.00');
 
         $orderId = $create->json('data.id');
+        $this->assertDatabaseHas('orders', [
+            'id' => $orderId,
+            'shipping_fee' => '26170.00',
+            'total_amount' => '216170.00',
+        ]);
 
         app('auth')->forgetGuards();
         $this->withToken($sales->createToken('test')->plainTextToken)
@@ -81,20 +103,201 @@ class OrderFefoTest extends TestCase
         ]);
     }
 
-    public function test_checkout_rejects_quantity_without_enough_available_stock(): void
+    public function test_checkout_rejects_a_missing_quote_token_without_creating_an_order_or_changing_stock(): void
     {
-        $this->batch('CC-SMALL', 2, '2026-12-10');
+        Http::fake();
+        $batch = $this->batch('CC-NO-QUOTE', 10, '2026-12-10');
         $customer = $this->user('Customer');
 
         $this->withToken($customer->createToken('test')->plainTextToken)
-            ->postJson('/api/v1/customer/orders', [
-                'recipient_name' => 'Khách Hàng',
-                'recipient_phone' => '0900000000',
-                'delivery_address' => 'Hà Nội',
-                'items' => [['product_id' => 1, 'quantity' => 3]],
+            ->postJson('/api/v1/customer/orders', $this->checkoutData())
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['quote_token']);
+
+        $this->assertNoOrderOrStockChange($batch);
+        Http::assertNothingSent();
+    }
+
+    public function test_checkout_rejects_an_invalid_quote_token_without_creating_an_order_or_changing_stock(): void
+    {
+        $this->fakeShipping();
+        $batch = $this->batch('CC-INVALID-QUOTE', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+        $data = $this->checkoutData($quoteToken);
+        $data['quote_token'] = 'invalid-quote-token';
+
+        $this->withToken($customer->createToken('test')->plainTextToken)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['quote_token']);
+
+        $this->assertNoOrderOrStockChange($batch);
+    }
+
+    public function test_checkout_rejects_an_expired_quote_token_without_creating_an_order_or_changing_stock(): void
+    {
+        $this->fakeShipping();
+        $batch = $this->batch('CC-EXPIRED-QUOTE', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+        $this->travel(601)->seconds();
+
+        $this->withToken($customer->createToken('test')->plainTextToken)
+            ->postJson('/api/v1/customer/orders', $this->checkoutData($quoteToken))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['quote_token']);
+
+        $this->assertNoOrderOrStockChange($batch);
+    }
+
+    public function test_checkout_rejects_a_quote_for_another_address_without_creating_an_order_or_changing_stock(): void
+    {
+        $this->fakeShipping();
+        $batch = $this->batch('CC-ADDRESS-MISMATCH', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+        $data = $this->checkoutData($quoteToken);
+        $data['delivery_address'] = '200 Other Synthetic Street';
+
+        $this->withToken($customer->createToken('test')->plainTextToken)
+            ->postJson('/api/v1/customer/orders', $data)
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['quote_token']);
+
+        $this->assertNoOrderOrStockChange($batch);
+    }
+
+    public function test_checkout_rejects_a_quote_issued_to_another_customer(): void
+    {
+        $this->fakeShipping();
+        $batch = $this->batch('CC-OTHER-CUSTOMER', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $otherCustomer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+
+        app('auth')->forgetGuards();
+        $this->withToken($otherCustomer->createToken('test')->plainTextToken)
+            ->postJson('/api/v1/customer/orders', $this->checkoutData($quoteToken))
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['quote_token']);
+
+        $this->assertNoOrderOrStockChange($batch);
+    }
+
+    public function test_forged_client_shipping_fee_does_not_change_the_fee_saved_from_a_valid_quote(): void
+    {
+        $this->fakeShipping();
+        $this->batch('CC-FORGED-QUOTE', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+
+        $this->withToken($customer->createToken('test')->plainTextToken)
+            ->postJson('/api/v1/customer/orders', $this->checkoutData($quoteToken, 999999))
+            ->assertCreated()
+            ->assertJsonPath('data.shipping_fee', '26170.00');
+
+        $this->assertDatabaseHas('orders', [
+            'shipping_fee' => '26170.00',
+            'total_amount' => '64170.00',
+        ]);
+    }
+
+    public function test_shipping_failure_does_not_create_order_or_change_stock(): void
+    {
+        $batch = $this->batch('CC-SHIPPING-ERROR', 10, '2026-12-10');
+        $customer = $this->user('Customer');
+        Http::fake([
+            'https://nominatim.test/search*' => Http::response(['upstream error'], 503),
+        ]);
+
+        $this->withToken($customer->createToken('test')->plainTextToken)
+            ->postJson('/api/v1/shipping/calculate', [
+                'delivery_address' => '100 Demo Street, Example District',
             ])
+            ->assertStatus(502);
+
+        $this->withToken($customer->createToken('test')->plainTextToken)
+            ->postJson('/api/v1/customer/orders', $this->checkoutData())
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['quote_token']);
+
+        $this->assertNoOrderOrStockChange($batch);
+    }
+
+    public function test_checkout_rejects_quantity_without_enough_available_stock(): void
+    {
+        $this->fakeShipping();
+        $this->batch('CC-SMALL', 2, '2026-12-10');
+        $customer = $this->user('Customer');
+        $quoteToken = $this->quoteToken($customer);
+
+        $this->withToken($customer->createToken('test')->plainTextToken)
+            ->postJson('/api/v1/customer/orders', $this->checkoutData($quoteToken, null, 3))
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['items']);
+    }
+
+    private function fakeShipping(float $distanceMeters = 5234): void
+    {
+        Http::fake([
+            'https://nominatim.test/search*' => Http::response([
+                ['lat' => '10.8', 'lon' => '106.75'],
+            ], 200),
+            'https://osrm.test/route/v1/driving/*' => Http::response([
+                'code' => 'Ok',
+                'routes' => [['distance' => $distanceMeters]],
+            ], 200),
+        ]);
+    }
+
+    private function quoteToken(User $customer, string $address = '100 Demo Street, Example District'): string
+    {
+        $response = $this->withToken($customer->createToken('quote-test')->plainTextToken)
+            ->postJson('/api/v1/shipping/calculate', ['delivery_address' => $address])
+            ->assertOk()
+            ->assertJsonStructure(['quote_token']);
+
+        $token = $response->json('quote_token');
+        $this->assertIsString($token);
+        $this->assertNotSame('', $token);
+
+        return $token;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function checkoutData(
+        ?string $quoteToken = null,
+        ?int $shippingFee = null,
+        int $quantity = 1,
+        string $address = '100 Demo Street, Example District',
+    ): array {
+        $data = [
+            'recipient_name' => 'Khách thử nghiệm',
+            'recipient_phone' => '0900000000',
+            'delivery_address' => $address,
+            'items' => [['product_id' => 1, 'quantity' => $quantity]],
+        ];
+
+        if ($quoteToken !== null) {
+            $data['quote_token'] = $quoteToken;
+        }
+
+        if ($shippingFee !== null) {
+            $data['shipping_fee'] = $shippingFee;
+        }
+
+        return $data;
+    }
+
+    private function assertNoOrderOrStockChange(Batch $batch): void
+    {
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('order_items', 0);
+        $this->assertDatabaseCount('order_details', 0);
+        $this->assertSame('10.00', number_format((float) $batch->refresh()->available_quantity, 2, '.', ''));
     }
 
     private function batch(string $code, int $available, string $expires): Batch
