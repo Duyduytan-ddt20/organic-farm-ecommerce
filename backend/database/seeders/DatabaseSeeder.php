@@ -51,5 +51,7 @@ class DatabaseSeeder extends Seeder
             // Lô Xà lách A12 khớp dữ liệu mẫu Figma
             ['id' => 4, 'product_id' => 1, 'batch_code' => 'A12', 'growing_location' => 'Khu A - Luống 12', 'planted_at' => '2026-10-05', 'harvested_at' => '2026-11-20', 'expires_at' => $now->copy()->addDays(3), 'received_quantity' => 50, 'available_quantity' => 45, 'status' => 'available', 'qr_token' => Str::random(32), 'created_at' => $now, 'updated_at' => $now],
         ]);
+
+        $this->call(DemoOrderSeeder::class);
     }
 }
