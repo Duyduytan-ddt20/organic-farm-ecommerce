@@ -2,7 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
+use App\Support\MysqlCheck;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration {
@@ -31,9 +31,9 @@ return new class extends Migration {
             $table->index('created_at', 'idx_orders_created');
         });
 
-        DB::statement("ALTER TABLE orders ADD CONSTRAINT chk_orders_amounts CHECK (shipping_fee >= 0 AND total_amount >= 0)");
-        DB::statement("ALTER TABLE orders ADD CONSTRAINT chk_orders_type CHECK (order_type IN ('retail', 'subscription', 'replacement'))");
-        DB::statement("ALTER TABLE orders ADD CONSTRAINT chk_orders_status CHECK (status IN ('pending', 'confirmed', 'shipping', 'delivered', 'cancelled'))");
+        MysqlCheck::add("ALTER TABLE orders ADD CONSTRAINT chk_orders_amounts CHECK (shipping_fee >= 0 AND total_amount >= 0)");
+        MysqlCheck::add("ALTER TABLE orders ADD CONSTRAINT chk_orders_type CHECK (order_type IN ('retail', 'subscription', 'replacement'))");
+        MysqlCheck::add("ALTER TABLE orders ADD CONSTRAINT chk_orders_status CHECK (status IN ('pending', 'confirmed', 'shipping', 'delivered', 'cancelled'))");
 
         Schema::create('order_items', function (Blueprint $table) {
             $table->id();
@@ -45,7 +45,7 @@ return new class extends Migration {
             $table->dateTime('updated_at');
         });
 
-        DB::statement("ALTER TABLE order_items ADD CONSTRAINT chk_order_items_qty CHECK (quantity > 0 AND unit_price >= 0)");
+        MysqlCheck::add("ALTER TABLE order_items ADD CONSTRAINT chk_order_items_qty CHECK (quantity > 0 AND unit_price >= 0)");
 
         Schema::create('order_details', function (Blueprint $table) {
             $table->id();
@@ -58,7 +58,7 @@ return new class extends Migration {
             $table->unique(['order_item_id', 'batch_id'], 'uk_order_item_batch');
         });
 
-        DB::statement("ALTER TABLE order_details ADD CONSTRAINT chk_order_details_qty CHECK (quantity > 0)");
+        MysqlCheck::add("ALTER TABLE order_details ADD CONSTRAINT chk_order_details_qty CHECK (quantity > 0)");
 
         Schema::create('payments', function (Blueprint $table) {
             $table->id();
@@ -76,10 +76,10 @@ return new class extends Migration {
             $table->index(['status', 'created_at'], 'idx_payments_status_created');
         });
 
-        DB::statement("ALTER TABLE payments ADD CONSTRAINT chk_payments_amount CHECK (amount > 0)");
-        DB::statement("ALTER TABLE payments ADD CONSTRAINT chk_payments_target CHECK ((order_id IS NOT NULL AND subscription_id IS NULL) OR (order_id IS NULL AND subscription_id IS NOT NULL))");
-        DB::statement("ALTER TABLE payments ADD CONSTRAINT chk_payments_method CHECK (method IN ('cod', 'vnpay_sandbox', 'mock'))");
-        DB::statement("ALTER TABLE payments ADD CONSTRAINT chk_payments_status CHECK (status IN ('pending', 'succeeded', 'failed', 'cancelled'))");
+        MysqlCheck::add("ALTER TABLE payments ADD CONSTRAINT chk_payments_amount CHECK (amount > 0)");
+        MysqlCheck::add("ALTER TABLE payments ADD CONSTRAINT chk_payments_target CHECK ((order_id IS NOT NULL AND subscription_id IS NULL) OR (order_id IS NULL AND subscription_id IS NOT NULL))");
+        MysqlCheck::add("ALTER TABLE payments ADD CONSTRAINT chk_payments_method CHECK (method IN ('cod', 'vnpay_sandbox', 'mock'))");
+        MysqlCheck::add("ALTER TABLE payments ADD CONSTRAINT chk_payments_status CHECK (status IN ('pending', 'succeeded', 'failed', 'cancelled'))");
 
         Schema::create('claims', function (Blueprint $table) {
             $table->id();
@@ -99,9 +99,9 @@ return new class extends Migration {
             $table->index(['status', 'created_at'], 'idx_claims_status_created');
         });
 
-        DB::statement("ALTER TABLE claims ADD CONSTRAINT chk_claims_qty CHECK (claimed_quantity > 0)");
-        DB::statement("ALTER TABLE claims ADD CONSTRAINT chk_claims_status CHECK (status IN ('pending', 'approved', 'rejected', 'resolved'))");
-        DB::statement("ALTER TABLE claims ADD CONSTRAINT chk_claims_resolution CHECK (resolution_type IS NULL OR resolution_type IN ('refund', 'replacement'))");
+        MysqlCheck::add("ALTER TABLE claims ADD CONSTRAINT chk_claims_qty CHECK (claimed_quantity > 0)");
+        MysqlCheck::add("ALTER TABLE claims ADD CONSTRAINT chk_claims_status CHECK (status IN ('pending', 'approved', 'rejected', 'resolved'))");
+        MysqlCheck::add("ALTER TABLE claims ADD CONSTRAINT chk_claims_resolution CHECK (resolution_type IS NULL OR resolution_type IN ('refund', 'replacement'))");
 
         // Hoàn tất vòng tham chiếu orders.replacement_claim_id -> claims.id
         Schema::table('orders', function (Blueprint $table) {
@@ -120,7 +120,7 @@ return new class extends Migration {
             $table->dateTime('created_at');
         });
 
-        DB::statement("ALTER TABLE claim_attachments ADD CONSTRAINT chk_claim_att_size CHECK (file_size_bytes > 0)");
+        MysqlCheck::add("ALTER TABLE claim_attachments ADD CONSTRAINT chk_claim_att_size CHECK (file_size_bytes > 0)");
 
         Schema::create('refunds', function (Blueprint $table) {
             $table->id();
@@ -140,9 +140,9 @@ return new class extends Migration {
             $table->index(['status', 'created_at'], 'idx_refunds_status_created');
         });
 
-        DB::statement("ALTER TABLE refunds ADD CONSTRAINT chk_refunds_amount CHECK (amount > 0)");
-        DB::statement("ALTER TABLE refunds ADD CONSTRAINT chk_refunds_target CHECK ((claim_id IS NOT NULL AND delivery_schedule_id IS NULL) OR (claim_id IS NULL AND delivery_schedule_id IS NOT NULL))");
-        DB::statement("ALTER TABLE refunds ADD CONSTRAINT chk_refunds_status CHECK (status IN ('pending', 'succeeded', 'failed'))");
+        MysqlCheck::add("ALTER TABLE refunds ADD CONSTRAINT chk_refunds_amount CHECK (amount > 0)");
+        MysqlCheck::add("ALTER TABLE refunds ADD CONSTRAINT chk_refunds_target CHECK ((claim_id IS NOT NULL AND delivery_schedule_id IS NULL) OR (claim_id IS NULL AND delivery_schedule_id IS NOT NULL))");
+        MysqlCheck::add("ALTER TABLE refunds ADD CONSTRAINT chk_refunds_status CHECK (status IN ('pending', 'succeeded', 'failed'))");
     }
 
     public function down(): void
