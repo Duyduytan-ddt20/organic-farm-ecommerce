@@ -5,96 +5,171 @@ namespace App\Services;
 use App\Exceptions\InsufficientStockException;
 use App\Models\Batch;
 use App\Models\Order;
+use App\Models\OrderItem;
 use App\Models\Product;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class FefoAllocationService
 {
-    /** Validate stock at checkout; confirmation repeats this check while holding row locks. */
     public function assertAvailable(array $items): void
     {
-        foreach ($this->requestedByProduct($items) as $productId => $requestedCenti) {
-            $product = Product::query()->whereKey($productId)->where('is_active', true)->firstOrFail();
-            $availableCenti = $this->eligibleBatches((int) $productId)->get()
-                ->sum(fn (Batch $batch) => $this->toCenti($batch->available_quantity));
+        $requestedByProduct = [];
+        foreach ($items as $item) {
+            $productId = (int) $item['product_id'];
+            $requestedByProduct[$productId] = ($requestedByProduct[$productId] ?? 0)
+                + $this->toCents($item['quantity']);
+        }
 
-            if ($availableCenti < $requestedCenti) {
-                throw new InsufficientStockException($requestedCenti / 100, $availableCenti / 100, $product->name);
+        foreach ($requestedByProduct as $productId => $requestedCents) {
+            $product = Product::query()->whereKey($productId)->where('is_active', true)->firstOrFail();
+            $availableCents = $this->eligibleBatches($productId)
+                ->get()
+                ->sum(fn (Batch $batch) => $this->toCents($batch->available_quantity));
+
+            if ($availableCents < $requestedCents) {
+                throw new InsufficientStockException(
+                    $requestedCents / 100,
+                    $availableCents / 100,
+                    $product->name,
+                );
             }
+        }
+    }
+
+    public function ensureAvailable(int $productId, mixed $quantity): void
+    {
+        $requestedCents = $this->toCents($quantity);
+        $availableCents = $this->eligibleBatches($productId)
+            ->get()
+            ->sum(fn (Batch $batch) => $this->toCents($batch->available_quantity));
+
+        if ($availableCents < $requestedCents) {
+            throw ValidationException::withMessages([
+                'items' => 'Số lượng tồn khả dụng không đủ cho sản phẩm đã chọn.',
+            ]);
         }
     }
 
     public function confirm(Order $order): Order
     {
-        return DB::transaction(function () use ($order) {
-            $lockedOrder = Order::query()->with('items')->whereKey($order->id)->lockForUpdate()->firstOrFail();
+        return DB::transaction(function () use ($order): Order {
+            $lockedOrder = Order::query()
+                ->with('items')
+                ->whereKey($order->id)
+                ->lockForUpdate()
+                ->firstOrFail();
 
             if ($lockedOrder->status === 'confirmed') {
                 return $lockedOrder->load('items.product', 'items.allocations.batch');
             }
+
             if ($lockedOrder->status !== 'pending') {
                 abort(409, 'Chỉ đơn hàng đang chờ mới được xác nhận.');
             }
 
+            $this->assertAvailable(
+                $lockedOrder->items->map(fn (OrderItem $item) => [
+                    'product_id' => $item->product_id,
+                    'quantity' => $item->quantity,
+                ])->all()
+            );
+
             foreach ($lockedOrder->items as $item) {
-                $product = Product::query()->whereKey($item->product_id)->where('is_active', true)->lockForUpdate()->firstOrFail();
-                $requestedCenti = $this->toCenti($item->quantity);
-                $batches = $this->eligibleBatches($product->id)->lockForUpdate()->get();
-                $availableCenti = $batches->sum(fn (Batch $batch) => $this->toCenti($batch->available_quantity));
-
-                if ($availableCenti < $requestedCenti) {
-                    throw new InsufficientStockException($requestedCenti / 100, $availableCenti / 100, $product->name);
-                }
-
-                $remainingCenti = $requestedCenti;
-                foreach ($batches as $batch) {
-                    if ($remainingCenti === 0) {
-                        break;
-                    }
-                    $batchCenti = $this->toCenti($batch->available_quantity);
-                    $allocatedCenti = min($remainingCenti, $batchCenti);
-                    $allocatedQuantity = $allocatedCenti / 100;
-
-                    $batch->available_quantity = number_format(($batchCenti - $allocatedCenti) / 100, 2, '.', '');
-                    $batch->save();
-                    $item->allocations()->create([
-                        'batch_id' => $batch->id,
-                        'quantity' => number_format($allocatedQuantity, 2, '.', ''),
-                        'allocated_at' => now(),
-                    ]);
-                    $remainingCenti -= $allocatedCenti;
-                }
+                $this->allocate($item);
             }
 
-            $lockedOrder->update(['status' => 'confirmed', 'confirmed_at' => now()]);
+            $lockedOrder->update([
+                'status' => 'confirmed',
+                'confirmed_at' => now(),
+            ]);
 
             return $lockedOrder->fresh('items.product', 'items.allocations.batch');
         }, 3);
     }
 
+    public function allocate(OrderItem $item): array
+    {
+        $remainingCents = $this->toCents($item->quantity);
+        $allocations = [];
+        $batches = $this->eligibleBatches((int) $item->product_id)
+            ->lockForUpdate()
+            ->get();
+
+        foreach ($batches as $batch) {
+            if ($remainingCents === 0) {
+                break;
+            }
+
+            $availableCents = $this->toCents($batch->available_quantity);
+            $allocatedCents = min($remainingCents, $availableCents);
+            if ($allocatedCents <= 0) {
+                continue;
+            }
+
+            $detail = $item->details()->create([
+                'batch_id' => $batch->id,
+                'quantity' => $this->fromCents($allocatedCents),
+                'allocated_at' => now(),
+                'released_at' => null,
+            ]);
+
+            $remainingCents -= $allocatedCents;
+            $batch->available_quantity = $this->fromCents($availableCents - $allocatedCents);
+            if ($availableCents === $allocatedCents) {
+                $batch->status = 'closed';
+            }
+            $batch->save();
+
+            $allocations[] = [
+                'batch_id' => $batch->id,
+                'batch_code' => $batch->batch_code,
+                'quantity' => $detail->quantity,
+            ];
+        }
+
+        if ($remainingCents > 0) {
+            throw ValidationException::withMessages([
+                'items' => 'Sản phẩm này không đủ tồn khả dụng theo FEFO để xác nhận đơn.',
+            ]);
+        }
+
+        return $allocations;
+    }
+
     private function eligibleBatches(int $productId)
     {
-        return Batch::query()->where('product_id', $productId)
+        return Batch::query()
+            ->where('product_id', $productId)
             ->where('status', 'available')
             ->where('available_quantity', '>', 0)
             ->whereNotNull('expires_at')
             ->where('expires_at', '>', now())
-            ->orderBy('expires_at')->orderBy('id');
+            ->orderBy('expires_at')
+            ->orderBy('id');
     }
 
-    private function requestedByProduct(array $items): array
+    private function toCents(mixed $value): int
     {
-        $requested = [];
-        foreach ($items as $item) {
-            $productId = (int) $item['product_id'];
-            $requested[$productId] = ($requested[$productId] ?? 0) + $this->toCenti($item['quantity']);
+        $normalized = trim((string) $value);
+        if (! preg_match('/^-?\d+(\.\d+)?$/', $normalized)) {
+            $normalized = number_format((float) $value, 2, '.', '');
         }
 
-        return $requested;
+        $negative = str_starts_with($normalized, '-');
+        $normalized = ltrim($normalized, '-');
+        [$whole, $fraction] = array_pad(explode('.', $normalized, 2), 2, '0');
+        $fraction = substr(str_pad($fraction, 2, '0'), 0, 2);
+        $cents = ((int) $whole * 100) + (int) $fraction;
+
+        return $negative ? -$cents : $cents;
     }
 
-    private function toCenti(int|float|string $quantity): int
+    private function fromCents(int $cents): string
     {
-        return (int) round((float) $quantity * 100);
+        $negative = $cents < 0;
+        $cents = abs($cents);
+
+        return ($negative ? '-' : '').intdiv($cents, 100).'.'.str_pad((string) ($cents % 100), 2, '0', STR_PAD_LEFT);
     }
 }

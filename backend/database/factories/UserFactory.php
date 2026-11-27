@@ -2,8 +2,8 @@
 
 namespace Database\Factories;
 
-use App\Models\User;
 use App\Models\Role;
+use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 
@@ -12,23 +12,21 @@ use Illuminate\Support\Facades\Hash;
  */
 class UserFactory extends Factory
 {
-    /**
-     * The current password being used by the factory.
-     */
     protected static ?string $password;
 
     /**
-     * Define the model's default state.
-     *
      * @return array<string, mixed>
      */
     public function definition(): array
     {
         return [
-            'role_id' => Role::query()->where('role_name', 'Customer')->value('id'),
+            'role_id' => Role::query()->firstOrCreate(
+                ['role_name' => 'Customer'],
+                ['description' => 'Khách hàng mua sắm'],
+            )->id,
             'full_name' => fake()->name(),
             'email' => fake()->unique()->safeEmail(),
-            'phone' => null,
+            'phone' => fake()->numerify('09########'),
             'password' => static::$password ??= Hash::make('password'),
             'is_active' => true,
         ];

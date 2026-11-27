@@ -23,6 +23,27 @@ class OrderController extends Controller
         return response()->json(['status' => 'success', 'data' => $order->load('items.product', 'items.allocations.batch')]);
     }
 
+    public function showOwn(Request $request, Order $order)
+    {
+        $user = $request->user();
+        $isAdmin = $user?->role?->role_name === 'Admin';
+        if (! $user || (! $isAdmin && (int) $order->user_id !== (int) $user->id)) {
+            abort(403, 'Bạn không có quyền xem đơn hàng này.');
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $order->load('items.product', 'items.claims.attachments'),
+        ]);
+    }
+
+    public function showDemo(Request $request)
+    {
+        $order = Order::query()->where('order_code', 'ORD-DEMO-DELIVERED')->firstOrFail();
+
+        return $this->showOwn($request, $order);
+    }
+
     public function store(Request $request, FefoAllocationService $allocationService)
     {
         $data = $request->validate([

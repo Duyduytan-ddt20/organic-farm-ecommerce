@@ -9,9 +9,22 @@ class OrderDetail extends Model
 {
     public $timestamps = false;
 
-    protected $fillable = ['order_item_id', 'batch_id', 'quantity', 'allocated_at', 'released_at'];
+    protected $fillable = [
+        'order_item_id',
+        'batch_id',
+        'quantity',
+        'allocated_at',
+        'released_at',
+    ];
 
-    protected $casts = ['quantity' => 'decimal:2', 'allocated_at' => 'datetime', 'released_at' => 'datetime'];
+    protected function casts(): array
+    {
+        return [
+            'quantity' => 'decimal:2',
+            'allocated_at' => 'datetime',
+            'released_at' => 'datetime',
+        ];
+    }
 
     public function orderItem(): BelongsTo
     {

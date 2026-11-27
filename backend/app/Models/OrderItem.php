@@ -8,9 +8,20 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class OrderItem extends Model
 {
-    protected $fillable = ['order_id', 'product_id', 'quantity', 'unit_price'];
+    protected $fillable = [
+        'order_id',
+        'product_id',
+        'quantity',
+        'unit_price',
+    ];
 
-    protected $casts = ['quantity' => 'decimal:2', 'unit_price' => 'decimal:2'];
+    protected function casts(): array
+    {
+        return [
+            'quantity' => 'decimal:2',
+            'unit_price' => 'decimal:2',
+        ];
+    }
 
     public function order(): BelongsTo
     {
@@ -25,5 +36,15 @@ class OrderItem extends Model
     public function allocations(): HasMany
     {
         return $this->hasMany(OrderDetail::class);
+    }
+
+    public function details(): HasMany
+    {
+        return $this->hasMany(OrderDetail::class);
+    }
+
+    public function claims(): HasMany
+    {
+        return $this->hasMany(Claim::class);
     }
 }

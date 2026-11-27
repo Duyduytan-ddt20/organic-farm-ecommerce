@@ -1,11 +1,12 @@
 <?php
 
+use App\Support\MysqlCheck;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('subscription_plans', function (Blueprint $table) {
@@ -18,8 +19,8 @@ return new class extends Migration {
             $table->dateTime('updated_at');
         });
 
-        DB::statement("ALTER TABLE subscription_plans ADD CONSTRAINT chk_sub_plans_duration CHECK (duration_days > 0)");
-        DB::statement("ALTER TABLE subscription_plans ADD CONSTRAINT chk_sub_plans_active CHECK (is_active IN (0, 1))");
+        MysqlCheck::add('ALTER TABLE subscription_plans ADD CONSTRAINT chk_sub_plans_duration CHECK (duration_days > 0)');
+        MysqlCheck::add('ALTER TABLE subscription_plans ADD CONSTRAINT chk_sub_plans_active CHECK (is_active IN (0, 1))');
 
         Schema::create('subscription_plan_items', function (Blueprint $table) {
             $table->id();
@@ -33,7 +34,7 @@ return new class extends Migration {
             $table->unique(['subscription_plan_id', 'product_id'], 'uk_sub_plan_product');
         });
 
-        DB::statement("ALTER TABLE subscription_plan_items ADD CONSTRAINT chk_sub_plan_items_qty CHECK (quantity_per_delivery > 0 AND unit_price >= 0)");
+        MysqlCheck::add('ALTER TABLE subscription_plan_items ADD CONSTRAINT chk_sub_plan_items_qty CHECK (quantity_per_delivery > 0 AND unit_price >= 0)');
 
         Schema::create('subscriptions', function (Blueprint $table) {
             $table->id();
@@ -53,8 +54,8 @@ return new class extends Migration {
             $table->index(['status', 'created_at'], 'idx_subscriptions_status_created');
         });
 
-        DB::statement("ALTER TABLE subscriptions ADD CONSTRAINT chk_subscriptions_dates CHECK (ends_on >= starts_on AND total_amount >= 0)");
-        DB::statement("ALTER TABLE subscriptions ADD CONSTRAINT chk_subscriptions_status CHECK (status IN ('pending_payment', 'active', 'paused', 'completed', 'cancelled'))");
+        MysqlCheck::add('ALTER TABLE subscriptions ADD CONSTRAINT chk_subscriptions_dates CHECK (ends_on >= starts_on AND total_amount >= 0)');
+        MysqlCheck::add("ALTER TABLE subscriptions ADD CONSTRAINT chk_subscriptions_status CHECK (status IN ('pending_payment', 'active', 'paused', 'completed', 'cancelled'))");
 
         Schema::create('subscription_items', function (Blueprint $table) {
             $table->id();
@@ -68,7 +69,7 @@ return new class extends Migration {
             $table->unique(['subscription_id', 'product_id'], 'uk_sub_item_product');
         });
 
-        DB::statement("ALTER TABLE subscription_items ADD CONSTRAINT chk_sub_items_qty CHECK (quantity_per_delivery > 0 AND unit_price >= 0)");
+        MysqlCheck::add('ALTER TABLE subscription_items ADD CONSTRAINT chk_sub_items_qty CHECK (quantity_per_delivery > 0 AND unit_price >= 0)');
 
         Schema::create('delivery_schedules', function (Blueprint $table) {
             $table->id();
@@ -87,8 +88,8 @@ return new class extends Migration {
             $table->index(['status', 'delivery_date'], 'idx_schedules_status_date');
         });
 
-        DB::statement("ALTER TABLE delivery_schedules ADD CONSTRAINT chk_schedules_amount CHECK (prepaid_amount >= 0)");
-        DB::statement("ALTER TABLE delivery_schedules ADD CONSTRAINT chk_schedules_status CHECK (status IN ('scheduled', 'generated', 'shortage', 'completed', 'cancelled'))");
+        MysqlCheck::add('ALTER TABLE delivery_schedules ADD CONSTRAINT chk_schedules_amount CHECK (prepaid_amount >= 0)');
+        MysqlCheck::add("ALTER TABLE delivery_schedules ADD CONSTRAINT chk_schedules_status CHECK (status IN ('scheduled', 'generated', 'shortage', 'completed', 'cancelled'))");
     }
 
     public function down(): void

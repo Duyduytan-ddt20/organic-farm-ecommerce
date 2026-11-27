@@ -8,7 +8,11 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class Role extends Model
 {
     public $timestamps = false;
-    protected $fillable = ['role_name', 'description'];
+
+    protected $fillable = [
+        'role_name',
+        'description',
+    ];
 
     public function users(): HasMany
     {
