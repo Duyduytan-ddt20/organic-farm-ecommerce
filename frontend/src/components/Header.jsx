@@ -13,11 +13,18 @@ export default function Header({ subtitle = 'KHÁCH HÀNG', title = 'Organic Far
   return (
     <header className="bg-emerald-800 px-4 py-5 text-white shadow-sm">
       <div className="mx-auto flex max-w-7xl flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <Link to="/">
-          <p className="text-xs font-semibold tracking-wider text-emerald-200 uppercase">
-            ORGANIC FARM / {subtitle}
-          </p>
-          <h1 className="mt-1 text-2xl font-bold">{title}</h1>
+        <Link to="/" className="flex items-center gap-3">
+          <img
+            src="/organic-farm-logo.png"
+            alt="Logo Organic Farm"
+            className="h-14 w-14 shrink-0 rounded-full bg-white object-contain"
+          />
+          <div>
+            <p className="text-xs font-semibold tracking-wider text-emerald-200 uppercase">
+              ORGANIC FARM / {subtitle}
+            </p>
+            <h1 className="mt-1 text-2xl font-bold">{title}</h1>
+          </div>
         </Link>
 
         <nav className="flex flex-wrap items-center gap-2">
@@ -48,9 +55,6 @@ export default function Header({ subtitle = 'KHÁCH HÀNG', title = 'Organic Far
                 </Link>
               ) : null}
               <span className="text-sm">{user.full_name}</span>
-              <span className="rounded-full bg-emerald-700 px-3 py-1 text-xs font-semibold">
-                {user.role?.role_name}
-              </span>
               <button
                 type="button"
                 onClick={handleLogout}
@@ -61,6 +65,12 @@ export default function Header({ subtitle = 'KHÁCH HÀNG', title = 'Organic Far
             </>
           ) : (
             <>
+              <Link
+                to="/#san-pham"
+                className="inline-flex min-h-10 items-center rounded-xl px-4 text-sm font-semibold"
+              >
+                Sản phẩm
+              </Link>
               <Link
                 to="/dang-nhap"
                 className="inline-flex min-h-10 items-center rounded-xl px-4 text-sm font-semibold"

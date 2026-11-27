@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import Button from '../components/Button';
+import TextField from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
 import { apiError } from '../utils/apiError';
 import {
@@ -9,11 +10,13 @@ import {
   canClearRejectedCheckout,
   readAuthSnapshot,
 } from '../utils/authSession';
+import { assignProductImages } from '../utils/productImages';
 
 const SHIPPING_DEBOUNCE_MS = 500;
 const MAX_DELIVERY_ADDRESS_LENGTH = 500;
 const DEFAULT_SHIPPING_RATE = 5000;
 const CHECKOUT_STORAGE_VERSION = 1;
+const VietnamDeliveryAddressFields = lazy(() => import('../components/VietnamDeliveryAddressFields'));
 
 function formatMoney(value) {
   return Number(value || 0).toLocaleString('vi-VN');
@@ -21,6 +24,17 @@ function formatMoney(value) {
 
 function normalizeAddress(address) {
   return String(address || '').trim().replace(/\s+/g, ' ');
+}
+
+function customerForm(user, savedForm = {}) {
+  return {
+    recipient_name: savedForm.recipient_name ?? user?.full_name ?? '',
+    recipient_phone: savedForm.recipient_phone ?? user?.phone ?? '',
+    delivery_address: savedForm.delivery_address ?? '',
+    delivery_province_code: savedForm.delivery_province_code ?? '',
+    delivery_ward_code: savedForm.delivery_ward_code ?? '',
+    delivery_detail: savedForm.delivery_detail ?? '',
+  };
 }
 
 function checkoutStorageKey(userId) {
@@ -134,20 +148,18 @@ export default function ShopPage() {
   const userId = user?.id == null ? '' : String(user.id);
   const [initialCheckoutState] = useState(() => readCheckoutRecord(userId));
   const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
   const [cart, setCart] = useState(() => (
     initialCheckoutState.record?.status === 'pending'
       ? initialCheckoutState.record.snapshot.cart
       : {}
   ));
   const [orders, setOrders] = useState([]);
-  const [form, setForm] = useState(() => (
+  const [form, setForm] = useState(() => customerForm(
+    user,
     initialCheckoutState.record?.status === 'pending'
       ? initialCheckoutState.record.snapshot.form
-      : {
-        recipient_name: user?.full_name || '',
-        recipient_phone: user?.phone || '',
-        delivery_address: '',
-      }
+      : {},
   ));
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState('success');
@@ -189,18 +201,14 @@ export default function ShopPage() {
     setCheckoutStorageError(restored.error);
     setNewCheckoutIntent(false);
     setCart(pending?.snapshot.cart || {});
-    setForm(pending?.snapshot.form || {
-      recipient_name: user?.full_name || '',
-      recipient_phone: user?.phone || '',
-      delivery_address: '',
-    });
+    setForm(customerForm(user, pending?.snapshot.form));
     setShippingQuote(pending?.snapshot.shippingQuote || null);
     setOrders([]);
     setShippingLoading(false);
     setShippingError('');
     setErrors({});
     setMessage('');
-  }, [user?.full_name, user?.phone, userId]);
+  }, [user, user?.full_name, user?.phone, userId]);
 
   useEffect(() => {
     if (!user) {
@@ -212,12 +220,12 @@ export default function ShopPage() {
       axiosClient.get('/products'),
       axiosClient.get('/customer/orders'),
     ]).then(([productsResponse, ordersResponse]) => {
-      setProducts(productsResponse.data.data ?? []);
-      setOrders(ordersResponse.data.data ?? []);
+      setProducts(Array.isArray(productsResponse.data) ? assignProductImages(productsResponse.data) : []);
+      setOrders(Array.isArray(ordersResponse.data) ? ordersResponse.data : []);
     }).catch((error) => {
       setMessage(apiError(error).message);
       setMessageType('error');
-    });
+    }).finally(() => setLoading(false));
   }, [navigate, user]);
 
   useEffect(() => {
@@ -248,7 +256,7 @@ export default function ShopPage() {
           !current.delivery_address
           && current.recipient_name === (user?.full_name || '')
           && current.recipient_phone === (user?.phone || '')
-            ? record.snapshot.form
+            ? customerForm(user, record.snapshot.form)
             : current
         ));
         setShippingQuote((current) => current || record.snapshot.shippingQuote);
@@ -266,7 +274,7 @@ export default function ShopPage() {
 
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, [user?.full_name, user?.phone, userId]);
+  }, [user, user?.full_name, user?.phone, userId]);
 
   useEffect(() => {
     if (checkoutRecord?.status === 'pending') {
@@ -274,6 +282,11 @@ export default function ShopPage() {
     }
 
     const address = normalizeAddress(form.delivery_address);
+    const addressIsComplete = Boolean(
+      form.delivery_province_code
+      && form.delivery_ward_code
+      && form.delivery_detail.trim(),
+    );
     const requestId = ++shippingRequestId.current;
     const invalidateRequest = () => {
       if (shippingRequestId.current === requestId) {
@@ -281,7 +294,7 @@ export default function ShopPage() {
       }
     };
 
-    if (!address) {
+    if (!address || !addressIsComplete) {
       return invalidateRequest;
     }
 
@@ -298,10 +311,10 @@ export default function ShopPage() {
           return;
         }
 
-        const distance = Number(response.data?.distance_km);
-        const rate = Number(response.data?.shipping_rate);
-        const fee = Number(response.data?.shipping_fee);
-        const quoteToken = response.data?.quote_token;
+        const distance = Number(response.distance_km);
+        const rate = Number(response.shipping_rate);
+        const fee = Number(response.shipping_fee);
+        const quoteToken = response.quote_token;
         if (
           !Number.isFinite(distance) || distance < 0
           || !Number.isInteger(rate) || rate <= 0
@@ -337,7 +350,14 @@ export default function ShopPage() {
       clearTimeout(timeoutId);
       invalidateRequest();
     };
-  }, [checkoutRecord?.status, form.delivery_address, shippingRetryVersion]);
+  }, [
+    checkoutRecord?.status,
+    form.delivery_address,
+    form.delivery_detail,
+    form.delivery_province_code,
+    form.delivery_ward_code,
+    shippingRetryVersion,
+  ]);
 
   function addProduct(product) {
     if (checkoutInFlight.current || checkoutRecord?.status === 'pending') {
@@ -375,7 +395,7 @@ export default function ShopPage() {
     }));
   }
 
-  function updateDeliveryAddress(address) {
+  function updateDeliveryAddress(address, locationFields = {}) {
     if (checkoutInFlight.current || checkoutRecord?.status === 'pending') {
       return;
     }
@@ -387,7 +407,15 @@ export default function ShopPage() {
     shippingRequestId.current += 1;
     const normalizedAddress = normalizeAddress(address);
     const addressLength = Array.from(normalizedAddress).length;
-    setShippingLoading(Boolean(normalizedAddress) && addressLength <= MAX_DELIVERY_ADDRESS_LENGTH);
+    const nextForm = { ...form, ...locationFields };
+    const addressIsComplete = Boolean(
+      nextForm.delivery_province_code
+      && nextForm.delivery_ward_code
+      && nextForm.delivery_detail.trim(),
+    );
+    setShippingLoading(
+      addressIsComplete && Boolean(normalizedAddress) && addressLength <= MAX_DELIVERY_ADDRESS_LENGTH,
+    );
     setShippingQuote(null);
     setShippingError(
       addressLength > MAX_DELIVERY_ADDRESS_LENGTH
@@ -400,14 +428,29 @@ export default function ShopPage() {
       delete next.delivery_address;
       return next;
     });
-    setForm((current) => ({ ...current, delivery_address: address }));
+    setForm((current) => ({ ...current, ...locationFields, delivery_address: address }));
+  }
+
+  function updateDeliveryLocation(value) {
+    const locationFields = {
+      delivery_province_code: value.provinceCode,
+      delivery_ward_code: value.wardCode,
+      delivery_detail: value.detail,
+    };
+    updateDeliveryAddress(value.address, locationFields);
   }
 
   function retryShippingCalculation() {
     const address = normalizeAddress(form.delivery_address);
+    const addressIsComplete = Boolean(
+      form.delivery_province_code
+      && form.delivery_ward_code
+      && form.delivery_detail.trim(),
+    );
     if (
       shippingLoading
       || checkoutRecord?.status === 'pending'
+      || !addressIsComplete
       || !address
       || Array.from(address).length > MAX_DELIVERY_ADDRESS_LENGTH
     ) {
@@ -485,7 +528,7 @@ export default function ShopPage() {
       updateCheckoutRecord(storedAtStart.record);
       if (!cartEntries.length) {
         setCart(storedAtStart.record.snapshot.cart);
-        setForm(storedAtStart.record.snapshot.form);
+        setForm(customerForm(user, storedAtStart.record.snapshot.form));
         setShippingQuote(storedAtStart.record.snapshot.shippingQuote);
       }
       setMessage('Đã khôi phục checkout đang chờ. Hãy thử lại cùng nội dung, không thay đổi giỏ hàng hoặc địa chỉ.');
@@ -664,7 +707,7 @@ export default function ShopPage() {
           return;
         }
 
-        setOrders((current) => [result.response.data.data, ...current]);
+        setOrders((current) => [result.response.data, ...current]);
         if (result.completionPersisted) {
           setCart({});
           setShippingQuote(null);
@@ -810,6 +853,13 @@ export default function ShopPage() {
   const cartEntries = Object.values(cart).filter((entry) => entry.quantity > 0);
   const checkoutUnresolved = checkoutRecord?.status === 'pending';
   const checkoutLocked = checkoutLoading || checkoutUnresolved;
+  const hasLegacyDeliveryAddress = Boolean(
+    checkoutLocked
+    && form.delivery_address
+    && !form.delivery_province_code
+    && !form.delivery_ward_code
+    && !form.delivery_detail,
+  );
   const subtotal = cartEntries.reduce(
     (sum, entry) => sum + Number(entry.product.base_price || 0) * Number(entry.quantity || 0),
     0,
@@ -826,6 +876,12 @@ export default function ShopPage() {
         <div className="grid gap-4 sm:grid-cols-2">
           {products.filter((product) => product.is_active).map((product) => (
             <article key={product.id} className="rounded-2xl bg-white p-5 shadow-sm">
+              <img
+                src={product.display_image}
+                alt={product.name}
+                loading="lazy"
+                className="mb-4 aspect-[4/3] w-full rounded-xl object-cover"
+              />
               <p className="text-xs font-semibold uppercase text-emerald-700">{product.category?.name}</p>
               <h2 className="mt-2 text-lg font-bold text-slate-900">{product.name}</h2>
               <p className="mt-1 text-sm text-slate-600">{product.description}</p>
@@ -837,6 +893,9 @@ export default function ShopPage() {
               </Button>
             </article>
           ))}
+          {loading ? (
+            <p role="status" className="text-sm text-slate-500">Đang tải sản phẩm...</p>
+          ) : null}
           {!loading && products.length === 0 ? (
             <p className="text-sm text-slate-500">Chưa có sản phẩm đang kinh doanh.</p>
           ) : null}
@@ -871,11 +930,24 @@ export default function ShopPage() {
           <form onSubmit={checkout} className="mt-5 space-y-3" noValidate>
             <TextField id="recipient_name" name="recipient_name" label="Người nhận" value={form.recipient_name} disabled={checkoutLocked} onChange={(event) => updateRecipientField('recipient_name', event.target.value)} error={errors.recipient_name} />
             <TextField id="recipient_phone" name="recipient_phone" label="Số điện thoại" value={form.recipient_phone} disabled={checkoutLocked} onChange={(event) => updateRecipientField('recipient_phone', event.target.value)} error={errors.recipient_phone} />
-            <label className="block">
-              <span className="mb-1.5 block text-sm font-medium">Địa chỉ giao hàng</span>
-              <textarea name="delivery_address" value={form.delivery_address} disabled={checkoutLocked} onChange={(event) => updateDeliveryAddress(event.target.value)} rows="3" className="w-full rounded-xl border border-slate-300 px-4 py-3" />
-              {errors.delivery_address ? <span className="text-sm text-red-600">{errors.delivery_address}</span> : null}
-            </label>
+            {hasLegacyDeliveryAddress ? (
+              <p className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
+                Địa chỉ của đơn đang chờ: {form.delivery_address}
+              </p>
+            ) : (
+              <Suspense fallback={<p role="status" className="text-sm text-slate-500">Đang tải danh sách địa chỉ...</p>}>
+                <VietnamDeliveryAddressFields
+                  value={{
+                    provinceCode: form.delivery_province_code,
+                    wardCode: form.delivery_ward_code,
+                    detail: form.delivery_detail,
+                  }}
+                  disabled={checkoutLocked}
+                  onChange={updateDeliveryLocation}
+                />
+              </Suspense>
+            )}
+            {errors.delivery_address ? <span className="text-sm text-red-600">{errors.delivery_address}</span> : null}
             <p className="text-xs text-slate-500">
               Phí vận chuyển sẽ tự tính sau khi bạn ngừng nhập địa chỉ.
             </p>
@@ -889,6 +961,9 @@ export default function ShopPage() {
                 <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{shippingError}</p>
                 {!shippingLoading
                   && checkoutRecord?.status !== 'pending'
+                  && form.delivery_province_code
+                  && form.delivery_ward_code
+                  && form.delivery_detail.trim()
                   && normalizeAddress(form.delivery_address)
                   && Array.from(normalizeAddress(form.delivery_address)).length <= MAX_DELIVERY_ADDRESS_LENGTH ? (
                     <Button type="button" variant="secondary" className="w-full" onClick={retryShippingCalculation}>
