@@ -75,4 +75,12 @@ Route::prefix('v1')->group(function () {
     Route::get('batches/expiring-soon', [BatchController::class, 'expiringSoon']);
     Route::apiResource('batches', BatchController::class);
     Route::patch('batches/{id}/discount', [BatchController::class, 'applyDiscount']);
+<<<<<<< HEAD
+    Route::prefix('v1')->group(function () {
+    // ... các route cũ giữ nguyên
+    Route::get('trace/{ma_lo}', [BatchController::class, 'traceByCode']);
 });
+});
+=======
+});
+>>>>>>> a9b0d69c48b5a5888882ecc16099ac8b29bfd777
