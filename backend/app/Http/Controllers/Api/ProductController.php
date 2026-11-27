@@ -61,9 +61,9 @@ class ProductController extends Controller
         ], 201);
     }
 
-    public function show(int $id): JsonResponse
-    {
-        $today = Carbon::today()->toDateString();
+   public function show(int $id): JsonResponse
+{
+    $today = Carbon::today()->toDateString();
 
         $product = Product::with(['category', 'batches' => function ($q) use ($today) {
             $q->where('status', 'available')
@@ -72,11 +72,11 @@ class ProductController extends Controller
               ->orderBy('expires_at', 'asc');
         }])->findOrFail($id);
 
-        return response()->json([
-            'status' => 'success',
-            'data'   => $product,
-        ]);
-    }
+    return response()->json([
+        'status' => 'success',
+        'data'   => $product,
+    ]);
+}
 
     public function update(Request $request, int $id): JsonResponse
     {

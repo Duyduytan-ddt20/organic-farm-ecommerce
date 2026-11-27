@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\OrderController;
 use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\QrCodeController;
 use App\Http\Controllers\Api\V1\RoleAccessController;
+use App\Http\Controllers\Api\V1\ShippingController;
 use App\Http\Controllers\Api\V1\StockDisposalController;
 use App\Http\Controllers\Api\V1\TraceController;
 use Illuminate\Support\Facades\Route;
@@ -38,6 +39,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('role:Customer,Admin');
         Route::get('/payments/{paymentReference}', [PaymentController::class, 'showStatus'])
             ->middleware('role:Customer,Admin');
+        Route::middleware('role:Customer,Admin')->post('/shipping/calculate', [ShippingController::class, 'calculate']);
 
         Route::middleware('role:Customer,Admin')->prefix('customer')->group(function () {
             Route::get('/dashboard', [RoleAccessController::class, 'customer']);
