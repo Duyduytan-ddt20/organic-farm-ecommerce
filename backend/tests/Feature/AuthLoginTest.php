@@ -84,7 +84,7 @@ class AuthLoginTest extends TestCase
         $this->postJson('/api/v1/auth/login', [
             'email' => 'customer@example.com',
             'password' => 'incorrect',
-        ])->assertUnprocessable()->assertJsonValidationErrors(['email']);
+        ])->assertUnauthorized();
     }
 
     public function test_logout_revokes_the_current_token(): void

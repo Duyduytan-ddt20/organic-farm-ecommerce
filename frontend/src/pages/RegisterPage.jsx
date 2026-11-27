@@ -1,122 +1,128 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import axiosClient from '../api/axiosClient';
-import { useAuth } from '../context/useAuth';
+import Button from '../components/Button';
+import TextField from '../components/TextField';
+import { useAuth } from '../context/useAuth.js';
+import { apiError } from '../utils/apiError';
+
+const INITIAL_FORM = {
+  full_name: '',
+  email: '',
+  phone: '',
+  password: '',
+  password_confirmation: '',
+};
 
 export default function RegisterPage() {
+  const { register } = useAuth();
   const navigate = useNavigate();
-  const { signIn } = useAuth();
-  const [form, setForm] = useState({
-    full_name: '',
-    email: '',
-    phone: '',
-    password: '',
-    password_confirmation: '',
-  });
-  const [error, setError] = useState('');
+  const [form, setForm] = useState(INITIAL_FORM);
+  const [errors, setErrors] = useState({});
+  const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  function updateField(event) {
-    setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
+  function update(event) {
+    const { name, value } = event.target;
+    setForm((current) => ({ ...current, [name]: value }));
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
-    setError('');
     setSubmitting(true);
+    setMessage('');
+    setErrors({});
 
     try {
-      const response = await axiosClient.post('/auth/register', form);
-      await signIn(response.data.data.token, response.data.data.user);
+      await register({
+        ...form,
+        phone: form.phone.trim() === '' ? null : form.phone.trim(),
+      });
       navigate('/', { replace: true, state: { registered: true } });
-    } catch (requestError) {
-      const payload = requestError.response?.data;
-      const firstFieldError = payload?.errors ? Object.values(payload.errors).flat()[0] : null;
-      setError(firstFieldError || payload?.message || requestError.message || 'Không đăng ký được.');
+    } catch (error) {
+      const parsed = apiError(error);
+      setMessage(parsed.message);
+      setErrors(parsed.errors);
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <section className="mx-auto max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
-      <h2 className="text-xl font-bold text-slate-900">Tạo tài khoản khách hàng</h2>
-      <p className="mt-2 text-sm text-slate-600">Tài khoản đăng ký mới được tạo với vai trò Customer.</p>
-      <form className="mt-5 space-y-4" onSubmit={handleSubmit}>
-        <label className="block text-sm font-medium text-slate-700">
-          Họ và tên
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-3"
-            name="full_name"
-            autoComplete="name"
-            maxLength={100}
-            required
-            value={form.full_name}
-            onChange={updateField}
-          />
-        </label>
-        <label className="block text-sm font-medium text-slate-700">
-          Email
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-3"
-            name="email"
-            type="email"
-            autoComplete="email"
-            maxLength={150}
-            required
-            value={form.email}
-            onChange={updateField}
-          />
-        </label>
-        <label className="block text-sm font-medium text-slate-700">
-          Số điện thoại (không bắt buộc)
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-3"
-            name="phone"
-            type="tel"
-            autoComplete="tel"
-            maxLength={20}
-            value={form.phone}
-            onChange={updateField}
-          />
-        </label>
-        <label className="block text-sm font-medium text-slate-700">
-          Mật khẩu (ít nhất 8 ký tự)
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-3"
-            name="password"
-            type="password"
-            autoComplete="new-password"
-            minLength={8}
-            required
-            value={form.password}
-            onChange={updateField}
-          />
-        </label>
-        <label className="block text-sm font-medium text-slate-700">
-          Nhập lại mật khẩu
-          <input
-            className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-3"
-            name="password_confirmation"
-            type="password"
-            autoComplete="new-password"
-            minLength={8}
-            required
-            value={form.password_confirmation}
-            onChange={updateField}
-          />
-        </label>
-        {error && <p role="alert" className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
-        <button
-          className="rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white disabled:opacity-60"
-          type="submit"
-          disabled={submitting}
-        >
+    <section className="mx-auto w-full max-w-md rounded-2xl bg-white p-5 shadow-sm sm:p-8">
+      <p className="text-sm font-semibold text-emerald-700">TÀI KHOẢN</p>
+      <h2 className="mt-2 text-2xl font-bold text-slate-900">Đăng ký</h2>
+      <p className="mt-2 text-sm leading-6 text-slate-600">
+        Tài khoản mới luôn có vai trò Khách hàng. Staff, Sales và Admin được cấp sẵn trong hệ thống.
+      </p>
+
+      <form onSubmit={handleSubmit} className="mt-6 space-y-4" noValidate>
+        <TextField
+          id="full_name"
+          name="full_name"
+          label="Họ và tên"
+          autoComplete="name"
+          value={form.full_name}
+          onChange={update}
+          error={errors.full_name}
+          required
+        />
+        <TextField
+          id="email"
+          name="email"
+          type="email"
+          label="Email"
+          autoComplete="email"
+          value={form.email}
+          onChange={update}
+          error={errors.email}
+          required
+        />
+        <TextField
+          id="phone"
+          name="phone"
+          type="tel"
+          label="Số điện thoại"
+          autoComplete="tel"
+          value={form.phone}
+          onChange={update}
+          error={errors.phone}
+        />
+        <TextField
+          id="password"
+          name="password"
+          type="password"
+          label="Mật khẩu"
+          autoComplete="new-password"
+          value={form.password}
+          onChange={update}
+          error={errors.password}
+          required
+        />
+        <TextField
+          id="password_confirmation"
+          name="password_confirmation"
+          type="password"
+          label="Xác nhận mật khẩu"
+          autoComplete="new-password"
+          value={form.password_confirmation}
+          onChange={update}
+          error={errors.password_confirmation}
+          required
+        />
+
+        {message ? (
+          <p className="rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700" role="alert">
+            {message}
+          </p>
+        ) : null}
+        <Button type="submit" className="w-full" disabled={submitting}>
           {submitting ? 'Đang tạo tài khoản...' : 'Đăng ký'}
-        </button>
+        </Button>
       </form>
-      <p className="mt-4 text-sm text-slate-600">
-        Đã có tài khoản? <Link className="font-semibold text-emerald-700 underline" to="/login">Đăng nhập</Link>
+
+      <p className="mt-5 text-sm text-slate-600">
+        Đã có tài khoản?{' '}
+        <Link to="/dang-nhap" className="font-semibold text-emerald-800">Đăng nhập</Link>
       </p>
     </section>
   );

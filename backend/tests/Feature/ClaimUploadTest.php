@@ -45,7 +45,7 @@ class ClaimUploadTest extends TestCase
         Storage::fake('public');
         $order = $this->deliveredOrder();
         $item = $order->items()->first();
-        $image = UploadedFile::fake()->image('hu-hong.jpg', 40, 40);
+        $image = $this->fakeImage('hu-hong.png');
 
         $response = $this->actingAs($this->customer, 'sanctum')->post('/api/v1/orders/'.$order->id.'/claims', [
             'order_item_id' => $item->id,
@@ -58,8 +58,8 @@ class ClaimUploadTest extends TestCase
         $response->assertCreated()
             ->assertJsonPath('data.status', 'pending')
             ->assertJsonPath('data.order_item_id', $item->id)
-            ->assertJsonPath('data.attachments.0.original_name', 'hu-hong.jpg')
-            ->assertJsonPath('data.attachments.0.mime_type', 'image/jpeg');
+            ->assertJsonPath('data.attachments.0.original_name', 'hu-hong.png')
+            ->assertJsonPath('data.attachments.0.mime_type', 'image/png');
 
         $path = $response->json('data.attachments.0.file_path');
         $this->assertNotEmpty($path);
@@ -73,7 +73,7 @@ class ClaimUploadTest extends TestCase
         $this->assertDatabaseHas('claim_attachments', [
             'claim_id' => $response->json('data.id'),
             'file_path' => $path,
-            'original_name' => 'hu-hong.jpg',
+            'original_name' => 'hu-hong.png',
         ]);
     }
 
@@ -86,7 +86,7 @@ class ClaimUploadTest extends TestCase
             'order_item_id' => $item->id,
             'reason' => 'Hư hỏng khi nhận hàng',
             'claimed_quantity' => 1,
-            'images' => [UploadedFile::fake()->image('remove-me.jpg')],
+            'images' => [$this->fakeImage('remove-me.png')],
         ])->assertCreated();
 
         $claimId = $created->json('data.id');
@@ -114,7 +114,7 @@ class ClaimUploadTest extends TestCase
             'reason' => 'Hư hỏng khi nhận hàng',
             'description' => 'Mô tả cũ',
             'claimed_quantity' => 1,
-            'images' => [UploadedFile::fake()->image('original.jpg')],
+            'images' => [$this->fakeImage('original.png')],
         ])->assertCreated();
         $claimId = $created->json('data.id');
         $originalPath = $created->json('data.attachments.0.file_path');
@@ -123,7 +123,7 @@ class ClaimUploadTest extends TestCase
             'reason' => 'Thiếu số lượng',
             'description' => 'Đã cập nhật mô tả',
             'claimed_quantity' => 1.5,
-            'images' => [UploadedFile::fake()->image('additional.jpg')],
+            'images' => [$this->fakeImage('additional.png')],
         ]);
 
         $updated->assertOk()
@@ -151,11 +151,11 @@ class ClaimUploadTest extends TestCase
             'reason' => 'Hư hỏng khi nhận hàng',
             'claimed_quantity' => 1,
             'images' => [
-                UploadedFile::fake()->image('one.jpg'),
-                UploadedFile::fake()->image('two.jpg'),
-                UploadedFile::fake()->image('three.jpg'),
-                UploadedFile::fake()->image('four.jpg'),
-                UploadedFile::fake()->image('five.jpg'),
+                $this->fakeImage('one.png'),
+                $this->fakeImage('two.png'),
+                $this->fakeImage('three.png'),
+                $this->fakeImage('four.png'),
+                $this->fakeImage('five.png'),
             ],
         ])->assertCreated();
         $claimId = $created->json('data.id');
@@ -164,7 +164,7 @@ class ClaimUploadTest extends TestCase
             ->put('/api/v1/claims/'.$claimId, [
                 'reason' => 'Thiếu số lượng',
                 'claimed_quantity' => 1,
-                'images' => [UploadedFile::fake()->image('six.jpg')],
+                'images' => [$this->fakeImage('six.png')],
             ])
             ->assertUnprocessable()
             ->assertJsonValidationErrors(['images']);
@@ -182,7 +182,7 @@ class ClaimUploadTest extends TestCase
             'order_item_id' => $order->items()->first()->id,
             'reason' => 'Hư hỏng khi nhận hàng',
             'claimed_quantity' => 1,
-            'images' => [UploadedFile::fake()->image('protected.jpg')],
+            'images' => [$this->fakeImage('protected.png')],
         ])->assertCreated();
         $claimId = $created->json('data.id');
         $otherCustomer = User::factory()->create(['role_id' => 1]);
@@ -216,7 +216,7 @@ class ClaimUploadTest extends TestCase
             'order_item_id' => $order->items()->first()->id,
             'reason' => 'Hư hỏng khi nhận hàng',
             'claimed_quantity' => 1,
-            'images' => [UploadedFile::fake()->image('protected.jpg')],
+            'images' => [$this->fakeImage('protected.png')],
         ])->assertCreated();
         $claimId = $created->json('data.id');
         $attachmentId = $created->json('data.attachments.0.id');
@@ -252,7 +252,7 @@ class ClaimUploadTest extends TestCase
             'order_item_id' => $item->id,
             'reason' => 'Hư hỏng khi nhận hàng',
             'claimed_quantity' => 1,
-            'images' => [UploadedFile::fake()->image('hu-hong.jpg')],
+            'images' => [$this->fakeImage('hu-hong.png')],
         ]);
 
         $response->assertCreated();
@@ -280,7 +280,7 @@ class ClaimUploadTest extends TestCase
             'order_item_id' => $item->id,
             'reason' => 'Hư hỏng khi nhận hàng',
             'claimed_quantity' => 1,
-            'images' => [UploadedFile::fake()->image('hu-hong.jpg')],
+            'images' => [$this->fakeImage('hu-hong.png')],
         ])->assertUnprocessable()->assertJsonValidationErrors(['order']);
 
         $this->assertDatabaseCount('claims', 0);
@@ -306,7 +306,7 @@ class ClaimUploadTest extends TestCase
 
         $this->actingAs($this->customer, 'sanctum')->post('/api/v1/orders/'.$order->id.'/claims', [
             ...$payload,
-            'images' => [UploadedFile::fake()->image('qua-nang.jpg')->size(5120)],
+            'images' => [$this->fakeImage('qua-nang.png')->size(5120)],
         ])->assertUnprocessable()->assertJsonValidationErrors(['images.0']);
 
         $this->assertDatabaseCount('claims', 0);
@@ -323,7 +323,7 @@ class ClaimUploadTest extends TestCase
             'order_item_id' => $order->items()->first()->id,
             'reason' => 'Hư hỏng khi nhận hàng',
             'claimed_quantity' => 1,
-            'images' => [UploadedFile::fake()->image('hu-hong.jpg')],
+            'images' => [$this->fakeImage('hu-hong.png')],
         ])->assertForbidden();
 
         $this->assertDatabaseCount('claims', 0);
@@ -351,5 +351,13 @@ class ClaimUploadTest extends TestCase
         ]);
 
         return $order->load('items');
+    }
+
+    private function fakeImage(string $filename): UploadedFile
+    {
+        return UploadedFile::fake()->createWithContent(
+            $filename,
+            base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=')
+        );
     }
 }

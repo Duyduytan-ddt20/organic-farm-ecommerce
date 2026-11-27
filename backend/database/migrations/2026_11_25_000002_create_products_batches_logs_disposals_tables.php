@@ -1,11 +1,12 @@
 <?php
 
+use App\Support\MysqlCheck;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
-return new class extends Migration {
+return new class extends Migration
+{
     public function up(): void
     {
         Schema::create('categories', function (Blueprint $table) {
@@ -17,7 +18,7 @@ return new class extends Migration {
             $table->dateTime('updated_at');
         });
 
-        DB::statement("ALTER TABLE categories ADD CONSTRAINT chk_categories_active CHECK (is_active IN (0, 1))");
+        MysqlCheck::add('ALTER TABLE categories ADD CONSTRAINT chk_categories_active CHECK (is_active IN (0, 1))');
 
         Schema::create('products', function (Blueprint $table) {
             $table->id();
@@ -33,8 +34,8 @@ return new class extends Migration {
             $table->dateTime('updated_at');
         });
 
-        DB::statement("ALTER TABLE products ADD CONSTRAINT chk_products_price CHECK (base_price >= 0)");
-        DB::statement("ALTER TABLE products ADD CONSTRAINT chk_products_active CHECK (is_active IN (0, 1))");
+        MysqlCheck::add('ALTER TABLE products ADD CONSTRAINT chk_products_price CHECK (base_price >= 0)');
+        MysqlCheck::add('ALTER TABLE products ADD CONSTRAINT chk_products_active CHECK (is_active IN (0, 1))');
 
         Schema::create('batches', function (Blueprint $table) {
             $table->id();
@@ -56,8 +57,8 @@ return new class extends Migration {
             $table->index(['status', 'expires_at'], 'idx_batches_expiry_alert');
         });
 
-        DB::statement("ALTER TABLE batches ADD CONSTRAINT chk_batches_qty CHECK (received_quantity >= 0 AND available_quantity >= 0 AND available_quantity <= received_quantity)");
-        DB::statement("ALTER TABLE batches ADD CONSTRAINT chk_batches_status CHECK (status IN ('growing', 'available', 'blocked', 'closed'))");
+        MysqlCheck::add('ALTER TABLE batches ADD CONSTRAINT chk_batches_qty CHECK (received_quantity >= 0 AND available_quantity >= 0 AND available_quantity <= received_quantity)');
+        MysqlCheck::add("ALTER TABLE batches ADD CONSTRAINT chk_batches_status CHECK (status IN ('growing', 'available', 'blocked', 'closed'))");
 
         Schema::create('farming_logs', function (Blueprint $table) {
             $table->id();
@@ -87,7 +88,7 @@ return new class extends Migration {
             $table->index(['batch_id', 'disposed_at'], 'idx_stock_disposals_batch_time');
         });
 
-        DB::statement("ALTER TABLE stock_disposals ADD CONSTRAINT chk_stock_disposals_qty CHECK (quantity > 0)");
+        MysqlCheck::add('ALTER TABLE stock_disposals ADD CONSTRAINT chk_stock_disposals_qty CHECK (quantity > 0)');
     }
 
     public function down(): void
