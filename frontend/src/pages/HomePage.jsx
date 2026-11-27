@@ -1,103 +1,111 @@
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
+import axiosClient from '../api/axiosClient';
 import { useAuth } from '../context/AuthContext';
-
-const areas = [
-  {
-    role: 'Customer',
-    title: 'Khách hàng',
-    text: 'Đăng ký, đăng nhập và mua nông sản trực tiếp từ nông trại.',
-  },
-  {
-    role: 'Staff',
-    title: 'Nhân viên nông trại',
-    text: 'Theo dõi lô hàng, hạn sử dụng và ghi nhận hao hụt.',
-  },
-  {
-    role: 'Sales',
-    title: 'Nhân viên bán hàng',
-    text: 'Xác nhận đơn và chăm sóc khách hàng.',
-  },
-  {
-    role: 'Admin',
-    title: 'Quản trị viên',
-    text: 'Truy cập toàn bộ khu vực Customer, Staff và Sales.',
-  },
-];
+import { apiError } from '../utils/apiError';
+import { assignProductImages } from '../utils/productImages';
 
 export default function HomePage() {
   const { user } = useAuth();
   const roleName = user?.role?.role_name;
+  const canPurchase = roleName === 'Customer' || roleName === 'Admin';
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+
+    axiosClient.get('/products').then((response) => {
+      if (active) {
+        const availableProducts = Array.isArray(response.data)
+          ? response.data.filter((product) => product.is_active)
+          : [];
+        setProducts(assignProductImages(availableProducts));
+      }
+    }).catch((requestError) => {
+      if (active) {
+        setError(apiError(requestError).message);
+      }
+    }).finally(() => {
+      if (active) {
+        setLoading(false);
+      }
+    });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   return (
-    <>
-      <section className="rounded-2xl bg-white p-5 shadow-sm sm:p-8">
-        <p className="text-sm font-semibold text-emerald-700">ĐỒ ÁN NHÓM 9</p>
-        <h2 className="mt-2 text-2xl font-bold text-slate-900 sm:text-3xl">
-          Website thương mại điện tử nông sản sạch
-        </h2>
-        <p className="mt-3 max-w-2xl leading-7 text-slate-600">
-          {user
-            ? `Xin chào ${user.full_name}. Bạn đang đăng nhập với vai trò ${roleName}.`
-            : 'Đăng ký tài khoản khách hàng hoặc đăng nhập để dùng các khu vực theo vai trò.'}
-        </p>
-        <div className="mt-6 flex flex-col gap-3 sm:flex-row">
-          {user ? (
-            <>
-              {(roleName === 'Customer' || roleName === 'Admin') ? (
-                <Link to="/mua-sam" className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white">
-                  Mua nông sản
-                </Link>
-              ) : null}
-              {(roleName === 'Staff' || roleName === 'Admin') ? (
-                <Link to="/quan-ly" className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white">
-                  Quản lý QR và lô hàng
-                </Link>
-              ) : null}
-              {(roleName === 'Sales' || roleName === 'Admin') ? (
-                <Link to="/don-hang" className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white">
-                  Xác nhận đơn hàng
-                </Link>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <Link
-                to="/dang-nhap"
-                className="inline-flex min-h-12 items-center justify-center rounded-xl bg-emerald-700 px-5 py-3 font-semibold text-white"
-              >
-                Đăng nhập
-              </Link>
-              <Link
-                to="/dang-ky"
-                className="inline-flex min-h-12 items-center justify-center rounded-xl bg-slate-600 px-5 py-3 font-semibold text-white"
-              >
-                Đăng ký
-              </Link>
-            </>
-          )}
+      <section id="san-pham" className="scroll-mt-6">
+        <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold text-emerald-700">TỪ NÔNG TRẠI</p>
+            <h2 className="mt-1 text-2xl font-bold text-slate-900">Rau củ quả đang bán</h2>
+          </div>
+          <p className="text-sm text-slate-600">Xem thông tin thoải mái; đăng nhập để đặt mua.</p>
         </div>
-      </section>
 
-      <section className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2">
-        {areas.map((area) => {
-          const active = roleName === 'Admin' || roleName === area.role;
-          return (
-            <article key={area.role} className="rounded-2xl bg-white p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-lg font-semibold">{area.title}</h3>
-                <span
-                  className={`rounded-full px-3 py-1 text-xs font-semibold ${
-                    active ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
-                  }`}
-                >
-                  {active && user ? 'Được truy cập' : area.role}
-                </span>
-              </div>
-              <p className="mt-2 leading-7 text-slate-600">{area.text}</p>
-            </article>
-          );
-        })}
+        {loading ? (
+          <p role="status" className="rounded-xl bg-white p-5 text-slate-600 shadow-sm">
+            Đang tải danh sách sản phẩm...
+          </p>
+        ) : null}
+        {error ? (
+          <p role="alert" className="rounded-xl bg-red-50 p-5 text-red-700">{error}</p>
+        ) : null}
+        {!loading && !error && products.length === 0 ? (
+          <p className="rounded-xl bg-white p-5 text-slate-600 shadow-sm">
+            Hiện chưa có sản phẩm đang kinh doanh.
+          </p>
+        ) : null}
+
+        {products.length > 0 ? (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {products.map((product) => (
+              <article key={product.id} className="rounded-2xl bg-white p-4 shadow-sm">
+                <img
+                  src={product.display_image}
+                  alt={product.name}
+                  loading="lazy"
+                  className="aspect-[4/3] w-full rounded-xl object-cover"
+                />
+                <p className="mt-4 text-xs font-semibold uppercase text-emerald-700">
+                  {product.category?.name || 'Nông sản'}
+                </p>
+                <h3 className="mt-1 text-lg font-bold text-slate-900">{product.name}</h3>
+                <p className="mt-2 min-h-12 text-sm leading-6 text-slate-600">
+                  {product.description || 'Nông sản tươi từ nông trại.'}
+                </p>
+                <div className="mt-4 flex items-center justify-between gap-3">
+                  <p className="font-bold text-emerald-800">
+                    {Number(product.base_price || 0).toLocaleString('vi-VN')} đ/{product.unit}
+                  </p>
+                  {canPurchase ? (
+                    <Link
+                      to="/mua-sam"
+                      className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"
+                    >
+                      Mua
+                    </Link>
+                  ) : !user ? (
+                    <Link
+                      to="/dang-nhap"
+                      state={{ from: '/mua-sam' }}
+                      className="rounded-xl bg-emerald-700 px-4 py-2 text-sm font-semibold text-white"
+                    >
+                      Mua
+                    </Link>
+                  ) : (
+                    <span className="text-xs text-slate-500">Chỉ dành cho tài khoản khách hàng</span>
+                  )}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : null}
       </section>
-    </>
   );
 }

@@ -52,12 +52,14 @@ return [
             ?: rtrim(env('APP_URL', 'http://localhost'), '/').'/api/v1/payments/momo-ipn',
         'return_url' => env('MOMO_RETURN_URL')
             ?: rtrim(env('FRONTEND_URL', 'http://localhost:5173'), '/').'/thanh-toan/ket-qua',
+    ],
+
     'shipping' => [
         'external_enabled' => env('SHIPPING_EXTERNAL_SERVICES_ENABLED', false),
         'provider' => env('SHIPPING_PROVIDER', 'nominatim'),
         'routing_provider' => env('SHIPPING_ROUTING_PROVIDER', 'osrm'),
-        'farm_latitude' => env('SHIPPING_FARM_LATITUDE', 10.77197),
-        'farm_longitude' => env('SHIPPING_FARM_LONGITUDE', 106.70135),
+        'farm_latitude' => env('SHIPPING_FARM_LATITUDE', 10.8278542),
+        'farm_longitude' => env('SHIPPING_FARM_LONGITUDE', 106.721396),
         'rate_per_km' => env('SHIPPING_RATE_PER_KM', 5000),
         'geocode_cache_ttl' => env('SHIPPING_GEOCODE_CACHE_TTL', 86400),
         'quote_ttl' => env('SHIPPING_QUOTE_TTL', 600),

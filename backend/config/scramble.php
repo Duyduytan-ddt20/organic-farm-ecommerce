@@ -13,6 +13,6 @@ return [
         RestrictedDocsAccess::class,
     ],
     'servers' => [
-        'Môi trường phát triển' => 'http://127.0.0.1:8000',
+        'Môi trường phát triển' => 'http://127.0.0.1:8000/api',
     ],
 ];

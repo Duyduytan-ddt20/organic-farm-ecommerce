@@ -1,5 +1,9 @@
 import axios from 'axios';
-import { authorizationForUser, readAuthSnapshot } from '../utils/authSession';
+import {
+    authorizationForUser,
+    clearAuthSnapshot,
+    readAuthSnapshot,
+} from '../utils/authSession';
 
 const axiosClient = axios.create({
     baseURL: import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000/api/v1',
@@ -7,15 +11,20 @@ const axiosClient = axios.create({
         'Content-Type': 'application/json',
         'Accept': 'application/json',
     },
-    withCredentials: true,
 });
 
 // Request Interceptor: Tự động gắn Access Token vào mọi request bảo vệ
 axiosClient.interceptors.request.use(
     (config) => {
-        const token = localStorage.getItem('access_token');
-        if (token) {
-            config.headers.Authorization = `Bearer ${token}`;
+        const snapshot = readAuthSnapshot();
+        if (config.expectedAuthUserId != null) {
+            config.headers.Authorization = authorizationForUser(
+                snapshot,
+                config.expectedAuthUserId,
+                config.expectedAuthSessionId,
+            );
+        } else if (snapshot.token) {
+            config.headers.Authorization = `Bearer ${snapshot.token}`;
         }
         return config;
     },
@@ -31,8 +40,7 @@ axiosClient.interceptors.response.use(
 
         // Bỏ qua nếu đang gọi API login để tránh bật popup nhầm khi nhập sai mật khẩu
         if ((status === 401 || status === 419) && !requestUrl.includes('/auth/login')) {
-            localStorage.removeItem('access_token');
-            localStorage.removeItem('user');
+            clearAuthSnapshot();
 
             // Phát sự kiện toàn cục để App.jsx mở Popup yêu cầu đăng nhập lại
             window.dispatchEvent(
