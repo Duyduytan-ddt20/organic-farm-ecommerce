@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import Button from '../components/Button';
-import TextField from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
 import { apiError } from '../utils/apiError';
 import {
@@ -208,6 +207,7 @@ export default function ShopPage() {
       navigate('/dang-nhap');
       return;
     }
+
     Promise.all([
       axiosClient.get('/products'),
       axiosClient.get('/customer/orders'),
@@ -837,10 +837,13 @@ export default function ShopPage() {
               </Button>
             </article>
           ))}
+          {!loading && products.length === 0 ? (
+            <p className="text-sm text-slate-500">Chưa có sản phẩm đang kinh doanh.</p>
+          ) : null}
         </div>
 
         <aside className="h-fit rounded-2xl bg-white p-5 shadow-sm">
-          <h2 className="text-xl font-bold text-slate-900">Thanh toán</h2>
+          <h2 className="text-xl font-bold text-slate-900">Giỏ hàng</h2>
           {cartEntries.length === 0 ? (
             <p className="mt-3 text-sm text-slate-500">Chưa có sản phẩm.</p>
           ) : (
@@ -853,7 +856,7 @@ export default function ShopPage() {
                   </div>
                   <input
                     type="number"
-                    min="0.01"
+                    min="0"
                     step="0.01"
                     value={entry.quantity}
                     disabled={checkoutLocked}
@@ -938,7 +941,9 @@ export default function ShopPage() {
                   <p className="font-bold">{order.order_code}</p>
                   <p className="text-sm font-semibold text-emerald-800">{order.status}</p>
                 </div>
-                <p className="mt-1 text-sm text-slate-600">{order.items.map((item) => `${item.product_name}: ${item.quantity} ${item.unit_price}`).join('; ')}</p>
+                <p className="mt-1 text-sm text-slate-600">
+                  {order.items.map((item) => `${item.product_name}: ${item.quantity} ${item.unit_price}`).join('; ')}
+                </p>
                 {order.items.some((item) => item.allocated_batches?.length) ? (
                   <p className="mt-2 text-xs text-slate-500">
                     Phân bổ FEFO: {order.items.flatMap((item) => item.allocated_batches.map((detail) => `${detail.batch_code} (${detail.quantity})`)).join(', ')}

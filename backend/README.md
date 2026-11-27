@@ -57,3 +57,18 @@ If you discover a security vulnerability within Laravel, please send an e-mail t
 ## License
 
 The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+
+## Thanh toán sandbox
+
+Luồng checkout hỗ trợ VNPay và MoMo sandbox. Sao chép các biến tương ứng trong `.env.example` vào `.env`, sau đó điền thông tin sandbox do nhà cung cấp cấp:
+
+- VNPay: `VNP_TMN_CODE` và `VNP_HASH_SECRET`.
+- MoMo: `MOMO_PARTNER_CODE`, `MOMO_ACCESS_KEY` và `MOMO_SECRET_KEY`.
+- `APP_URL` phải là URL backend mà nhà cung cấp có thể truy cập; `FRONTEND_URL` là URL frontend. Có thể đặt URL callback/return riêng bằng `MOMO_IPN_URL`, `MOMO_RETURN_URL` và `VNP_RETURN_URL`.
+
+Đăng ký IPN URL với nhà cung cấp:
+
+- VNPay: `https://<backend-domain>/api/v1/payments/vnpay-ipn`
+- MoMo: `https://<backend-domain>/api/v1/payments/momo-ipn`
+
+Khi chạy local, cần dùng một public tunnel cho backend để nhà cung cấp gọi được IPN; URL `localhost` không truy cập được từ bên ngoài. Chạy `php artisan migrate` để cập nhật ràng buộc phương thức thanh toán. Trạng thái đơn chỉ được xác nhận sau IPN hợp lệ; trang return của frontend chỉ truy vấn trạng thái, không tự xác nhận thanh toán.
