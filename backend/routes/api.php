@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\OrderController;
 use App\Http\Controllers\Api\V1\PaymentController;
 use App\Http\Controllers\Api\V1\QrCodeController;
 use App\Http\Controllers\Api\V1\RoleAccessController;
+use App\Http\Controllers\Api\V1\ShippingController;
 use App\Http\Controllers\Api\V1\StockDisposalController;
 use App\Http\Controllers\Api\V1\TraceController;
 use Illuminate\Support\Facades\Route;
@@ -38,6 +39,7 @@ Route::prefix('v1')->group(function () {
             ->middleware('role:Customer,Admin');
         Route::get('/payments/{paymentReference}', [PaymentController::class, 'showStatus'])
             ->middleware('role:Customer,Admin');
+        Route::middleware('role:Customer,Admin')->post('/shipping/calculate', [ShippingController::class, 'calculate']);
 
         Route::middleware('role:Customer,Admin')->prefix('customer')->group(function () {
             Route::get('/dashboard', [RoleAccessController::class, 'customer']);
@@ -75,12 +77,4 @@ Route::prefix('v1')->group(function () {
     Route::get('batches/expiring-soon', [BatchController::class, 'expiringSoon']);
     Route::apiResource('batches', BatchController::class);
     Route::patch('batches/{id}/discount', [BatchController::class, 'applyDiscount']);
-<<<<<<< HEAD
-    Route::prefix('v1')->group(function () {
-    // ... các route cũ giữ nguyên
-    Route::get('trace/{ma_lo}', [BatchController::class, 'traceByCode']);
 });
-});
-=======
-});
->>>>>>> a9b0d69c48b5a5888882ecc16099ac8b29bfd777
