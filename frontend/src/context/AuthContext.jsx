@@ -34,9 +34,14 @@ export function AuthProvider({ children }) {
 
       setUser(readAuthSnapshot().user);
     };
+    const clearExpiredSession = () => setUser(null);
 
     window.addEventListener('storage', syncAuthSession);
-    return () => window.removeEventListener('storage', syncAuthSession);
+    window.addEventListener('auth:session-expired', clearExpiredSession);
+    return () => {
+      window.removeEventListener('storage', syncAuthSession);
+      window.removeEventListener('auth:session-expired', clearExpiredSession);
+    };
   }, []);
 
   const value = useMemo(() => {
@@ -48,14 +53,14 @@ export function AuthProvider({ children }) {
     return {
       user,
       async register(payload) {
-        const { data } = await axiosClient.post('/auth/register', payload);
-        await persist(data.data.user, data.data.token);
-        return data.data.user;
+        const response = await axiosClient.post('/auth/register', payload);
+        await persist(response.data.user, response.data.token);
+        return response.data.user;
       },
       async login(payload) {
-        const { data } = await axiosClient.post('/auth/login', payload);
-        await persist(data.data.user, data.data.token);
-        return data.data.user;
+        const response = await axiosClient.post('/auth/login', payload);
+        await persist(response.data.user, response.data.token);
+        return response.data.user;
       },
       async logout() {
         const session = readAuthSnapshot();
