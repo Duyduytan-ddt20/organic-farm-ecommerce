@@ -18,7 +18,7 @@ export default function CheckoutPage() {
         recipient_phone: user?.phone ?? '',
         delivery_address: '',
     });
-    const [paymentMethod, setPaymentMethod] = useState('vnpay_sandbox');
+    const [paymentMethod, setPaymentMethod] = useState('momo_sandbox');
     const [submitting, setSubmitting] = useState(false);
     const [errorMessage, setErrorMessage] = useState('');
     const [pendingOrderId, setPendingOrderId] = useState(null);
@@ -59,8 +59,7 @@ export default function CheckoutPage() {
                 return;
             }
 
-            const provider = paymentMethod === 'momo_sandbox' ? 'momo' : 'vnpay';
-            const paymentResponse = await axiosClient.post(`/payments/${provider}/create`, {
+            const paymentResponse = await axiosClient.post('/payments/momo/create', {
                 order_id: orderId,
             });
             const paymentUrl = paymentResponse.data?.payment_url;
@@ -143,10 +142,9 @@ export default function CheckoutPage() {
 
                     <fieldset>
                         <legend className="block text-sm font-medium text-slate-700">Phương thức thanh toán</legend>
-                        <div className="mt-2 grid gap-3 sm:grid-cols-3">
+                        <div className="mt-2 grid gap-3 sm:grid-cols-2">
                             {[
-                                ['vnpay_sandbox', 'VNPay Sandbox'],
-                                ['momo_sandbox', 'MoMo Sandbox'],
+                                ['momo_sandbox', 'MoMo'],
                                 ['cod', 'Thanh toán khi nhận'],
                             ].map(([value, label]) => (
                                 <label

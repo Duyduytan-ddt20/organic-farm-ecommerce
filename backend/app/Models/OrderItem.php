@@ -37,4 +37,9 @@ class OrderItem extends Model
     {
         return $this->hasMany(OrderDetail::class);
     }
+
+    public function claims(): HasMany
+    {
+        return $this->hasMany(Claim::class);
+    }
 }

@@ -78,3 +78,4 @@ Luồng checkout hỗ trợ VNPay và MoMo sandbox. Sao chép các biến tươn
 - MoMo: `https://<backend-domain>/api/v1/payments/momo-ipn`
 
 Khi chạy local, cần dùng một public tunnel cho backend để nhà cung cấp gọi được IPN; URL `localhost` không truy cập được từ bên ngoài. Chạy `php artisan migrate` để cập nhật ràng buộc phương thức thanh toán. Trạng thái đơn chỉ được xác nhận sau IPN hợp lệ; trang return của frontend chỉ truy vấn trạng thái, không tự xác nhận thanh toán.
+

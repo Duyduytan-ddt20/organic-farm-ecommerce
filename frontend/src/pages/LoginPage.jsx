@@ -28,11 +28,18 @@ export default function LoginPage() {
     try {
       await login(form);
       const returnPath = location.state?.from;
+      const purchaseProduct = location.state?.purchaseProduct;
+      const purchaseProductId = Number(purchaseProduct?.id);
       navigate(
         typeof returnPath === 'string' && returnPath.startsWith('/') && !returnPath.startsWith('//')
           ? returnPath
           : '/',
-        { replace: true },
+        {
+          replace: true,
+          state: Number.isSafeInteger(purchaseProductId) && purchaseProductId > 0
+            ? { purchaseProduct }
+            : null,
+        },
       );
     } catch (error) {
       const parsed = apiError(error);

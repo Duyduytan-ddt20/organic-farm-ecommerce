@@ -1,0 +1,8 @@
+$kind: http-request
+url: "{{baseUrl}}/api/v1/batches/1/qr"
+method: GET
+auth:
+  type: bearer
+  credentials:
+    token: "{{staffToken}}"
+order: 6000

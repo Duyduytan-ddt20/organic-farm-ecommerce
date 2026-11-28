@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Batch;
+use App\Models\Order;
 use App\Models\OrderItem;
 use Illuminate\Validation\ValidationException;
 
@@ -81,6 +82,53 @@ class FefoAllocationService
         }
 
         return $allocations;
+    }
+
+    public function previewForOrder(Order $order): array
+    {
+        $productIds = $order->items->pluck('product_id')->unique();
+        $batches = Batch::query()
+            ->whereIn('product_id', $productIds)
+            ->where('status', 'available')
+            ->where('available_quantity', '>', 0)
+            ->where('expires_at', '>', now())
+            ->orderBy('expires_at')
+            ->orderBy('id')
+            ->get();
+        $batchesByProduct = $batches->groupBy('product_id');
+        $remainingByBatch = $batches->mapWithKeys(
+            fn (Batch $batch) => [$batch->id => $this->toCents($batch->available_quantity)],
+        )->all();
+        $preview = [];
+
+        foreach ($order->items as $item) {
+            $remainingCents = $this->toCents($item->quantity);
+            $itemBatches = [];
+
+            foreach ($batchesByProduct->get($item->product_id, collect()) as $batch) {
+                if ($remainingCents === 0) {
+                    break;
+                }
+
+                $availableCents = $remainingByBatch[$batch->id];
+                $allocatedCents = min($remainingCents, $availableCents);
+                if ($allocatedCents <= 0) {
+                    continue;
+                }
+
+                $remainingByBatch[$batch->id] -= $allocatedCents;
+                $remainingCents -= $allocatedCents;
+                $itemBatches[] = [
+                    'batch_id' => $batch->id,
+                    'batch_code' => $batch->batch_code,
+                    'quantity' => $this->fromCents($allocatedCents),
+                ];
+            }
+
+            $preview[$item->id] = $itemBatches;
+        }
+
+        return $preview;
     }
 
     private function toCents(mixed $value): int

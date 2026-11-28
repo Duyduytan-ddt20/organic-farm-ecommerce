@@ -1,0 +1,11 @@
+$kind: http-request
+url: "{{baseUrl}}/api/v1/admin/dashboard"
+method: GET
+headers:
+  Accept: application/json
+  Authorization: Bearer {{salesToken}}
+scripts:
+  - type: afterResponse
+    code: pm.test('Sales bị 403', function () { pm.response.to.have.status(403); });
+    language: text/javascript
+order: 7000

@@ -1,0 +1,43 @@
+$kind: http-request
+url: "{{baseUrl}}/api/v1/customer/orders"
+method: POST
+headers:
+  Idempotency-Key: "{{$guid}}"
+body:
+  type: json
+  content: "{\r
+
+    \  \"recipient_name\": \"Trần Duy Tân\",\r
+
+    \  \"recipient_phone\": \"0901234567\",\r
+
+    \  \"delivery_address\": \"65 Huỳnh Thúc Kháng, Quận 1, TP.HCM\",\r
+
+    \  \"quote_token\": \"{{quote_token}}\",\r
+
+    \  \"items\": [\r
+
+    \    { \"product_id\": 1, \"quantity\": 2 }\r
+
+    \  ]\r
+
+    }"
+auth:
+  type: bearer
+  credentials:
+    token: "{{customerToken}}"
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Tạo đơn hàng thành công (201)\", function () {\r
+
+      \    pm.response.to.have.status(201);\r
+
+      \    const res = pm.response.json();\r
+
+      \    const orderId = res.data?.id || res.id || res.order?.id;\r
+
+      \    pm.collectionVariables.set(\"order_id\", orderId);\r
+
+      });"
+    language: text/javascript
+order: 2653

@@ -65,12 +65,22 @@ class ProductController extends Controller
 {
     $today = Carbon::today()->toDateString();
 
-        $product = Product::with(['category', 'batches' => function ($q) use ($today) {
-            $q->where('status', 'available')
-              ->where('available_quantity', '>', 0)
-              ->whereDate('expires_at', '>', $today)
-              ->orderBy('expires_at', 'asc');
-        }])->findOrFail($id);
+        $product = Product::with([
+            'category',
+            'batches' => function ($query) use ($today) {
+                $query->where('status', 'available')
+                    ->where('available_quantity', '>', 0)
+                    ->whereDate('expires_at', '>', $today)
+                    ->orderBy('expires_at', 'asc')
+                    ->with([
+                        'farmingLogs' => function ($logQuery) {
+                            $logQuery->orderBy('performed_at')
+                                ->orderBy('id')
+                                ->with('staff:id,full_name');
+                        },
+                    ]);
+            },
+        ])->findOrFail($id);
 
     return response()->json([
         'status' => 'success',

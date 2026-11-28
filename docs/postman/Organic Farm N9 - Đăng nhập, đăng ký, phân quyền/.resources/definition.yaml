@@ -1,0 +1,9 @@
+$kind: collection
+description: "Luồng Sanctum: đăng ký Customer, đăng nhập 4 vai trò, kiểm tra middleware role, đăng xuất. Base URL mặc định http://127.0.0.1:8000. Tài khoản seed mật khẩu 12345678."
+variables:
+  baseUrl: http://127.0.0.1:8000
+  registerEmail: ""
+  customerToken: ""
+  staffToken: ""
+  salesToken: ""
+  adminToken: ""

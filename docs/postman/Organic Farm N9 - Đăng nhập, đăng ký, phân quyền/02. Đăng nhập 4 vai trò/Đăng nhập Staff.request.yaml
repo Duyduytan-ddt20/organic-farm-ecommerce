@@ -1,0 +1,20 @@
+$kind: http-request
+url: "{{baseUrl}}/api/v1/auth/login"
+method: POST
+headers:
+  Accept: application/json
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "email": "staff@organicfarm.vn",
+      "password": "12345678"
+    }
+scripts:
+  - type: afterResponse
+    code: |-
+      pm.test('Login Staff 200', function () { pm.response.to.have.status(200); });
+      pm.collectionVariables.set('staffToken', pm.response.json().data.token);
+    language: text/javascript
+order: 2000

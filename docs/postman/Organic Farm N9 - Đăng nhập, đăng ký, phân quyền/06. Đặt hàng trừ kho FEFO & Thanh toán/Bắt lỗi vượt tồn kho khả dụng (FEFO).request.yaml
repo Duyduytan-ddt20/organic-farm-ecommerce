@@ -1,0 +1,37 @@
+$kind: http-request
+url: "{{baseUrl}}/api/v1/customer/orders"
+method: POST
+headers:
+  Idempotency-Key: "{{$guid}}"
+body:
+  type: json
+  content: "{\r
+
+    \  \"recipient_name\": \"Trần Duy Tân\",\r
+
+    \  \"recipient_phone\": \"0901234567\",\r
+
+    \  \"delivery_address\": \"65 Huỳnh Thúc Kháng, Quận 1, TP.HCM\",\r
+
+    \  \"quote_token\": \"{{quote_token}}\",\r
+
+    \  \"items\": [\r
+
+    \    { \"product_id\": 1, \"quantity\": 99999 }\r
+
+    \  ]\r
+
+    }"
+auth:
+  type: bearer
+  credentials:
+    token: "{{customerToken}}"
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Bắt lỗi vượt quá tồn kho khả dụng FEFO (422)\", function () {\r
+
+      \    pm.expect(pm.response.code).to.be.oneOf([400, 422]);\r
+
+      });"
+    language: text/javascript
+order: 2828
