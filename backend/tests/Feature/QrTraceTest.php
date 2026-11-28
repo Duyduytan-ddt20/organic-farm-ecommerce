@@ -6,6 +6,7 @@ use App\Models\Batch;
 use App\Models\FarmingLog;
 use App\Models\Role;
 use App\Models\User;
+use Database\Seeders\BatchSampleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
@@ -106,6 +107,29 @@ class QrTraceTest extends TestCase
             ->assertJsonPath('data.responsible_staff.id', $latestStaff->id)
             ->assertJsonPath('data.responsible_staff.full_name', 'Nhân viên B')
             ->assertJsonCount(2, 'data.farming_logs');
+    }
+
+    public function test_sample_batch_seeder_adds_idempotent_farming_logs_and_trace_data(): void
+    {
+        $this->user('Staff', 'Nhân viên An');
+        $existingBatch = $this->batch('LO-EXISTING', 'token-existing');
+        $seeder = app(BatchSampleSeeder::class);
+
+        $seeder->run();
+        $seeder->run();
+
+        $batch = Batch::query()->where('batch_code', 'SAMPLE-P1-A')->firstOrFail();
+
+        $this->assertSame(3, $batch->farmingLogs()->count());
+        $this->assertSame(3, $existingBatch->farmingLogs()->count());
+        $this->getJson('/api/v1/trace/'.$batch->qr_token)
+            ->assertOk()
+            ->assertJsonPath('data.responsible_staff.full_name', 'Nhân viên An')
+            ->assertJsonCount(3, 'data.farming_logs');
+        $this->getJson('/api/v1/trace/'.$existingBatch->qr_token)
+            ->assertOk()
+            ->assertJsonPath('data.responsible_staff.full_name', 'Nhân viên An')
+            ->assertJsonCount(3, 'data.farming_logs');
     }
 
     public function test_missing_token_returns_not_found_and_batch_without_token_returns_unprocessable(): void

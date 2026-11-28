@@ -1,0 +1,11 @@
+$kind: http-request
+url: "{{baseUrl}}/api/v1/sales/dashboard"
+method: GET
+headers:
+  Accept: application/json
+  Authorization: Bearer {{salesToken}}
+scripts:
+  - type: afterResponse
+    code: pm.test('Sales 200', function () { pm.response.to.have.status(200); });
+    language: text/javascript
+order: 6000

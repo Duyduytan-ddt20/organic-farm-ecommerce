@@ -62,5 +62,7 @@ class DatabaseSeeder extends Seeder
             Batch::factory()->expiringSoon()->create(['product_id' => $product->id]);
             Batch::factory()->outOfStock()->create(['product_id' => $product->id]);
         });
+
+        $this->call(BatchSampleSeeder::class);
     }
 }

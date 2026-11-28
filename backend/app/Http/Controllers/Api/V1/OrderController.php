@@ -18,6 +18,37 @@ use Illuminate\Validation\ValidationException;
 
 class OrderController extends Controller
 {
+    public function checkCartStock(Request $request, FefoAllocationService $fefo): JsonResponse
+    {
+        $data = $request->validate([
+            'product_id' => ['required', 'integer', 'exists:products,id'],
+            'quantity' => ['required', 'numeric', 'min:0', 'regex:/^\d+(\.\d{1,2})?$/'],
+        ]);
+
+        $product = Product::query()
+            ->whereKey($data['product_id'])
+            ->where('is_active', true)
+            ->first();
+
+        if (! $product) {
+            throw ValidationException::withMessages([
+                'product_id' => 'Sản phẩm không còn được kinh doanh.',
+            ]);
+        }
+
+        if ((float) $data['quantity'] > 0) {
+            $fefo->ensureAvailable((int) $product->id, $data['quantity']);
+        }
+
+        return response()->json([
+            'message' => 'Tồn kho khả dụng đủ.',
+            'data' => [
+                'product_id' => $product->id,
+                'quantity' => $data['quantity'],
+            ],
+        ]);
+    }
+
     public function store(
         Request $request,
         FefoAllocationService $fefo,
@@ -148,7 +179,7 @@ class OrderController extends Controller
     {
         $orders = Order::query()
             ->where('user_id', $request->user()->id)
-            ->with(['items.product', 'items.details.batch'])
+            ->with(['items.product', 'items.details.batch', 'payments'])
             ->orderByDesc('created_at')
             ->get();
 
@@ -157,13 +188,20 @@ class OrderController extends Controller
         ]);
     }
 
-    public function salesIndex(): JsonResponse
+    public function salesIndex(FefoAllocationService $fefo): JsonResponse
     {
         $orders = Order::query()
-            ->with(['user:id,full_name,email', 'items.product', 'items.details.batch'])
+            ->with(['user:id,full_name,email', 'items.product', 'items.details.batch', 'payments'])
             ->orderByRaw("CASE WHEN status = 'pending' THEN 0 ELSE 1 END")
             ->orderByDesc('created_at')
             ->get();
+
+        foreach ($orders->where('status', 'pending') as $order) {
+            $plannedBatches = $fefo->previewForOrder($order);
+            foreach ($order->items as $item) {
+                $item->setAttribute('planned_batches', $plannedBatches[$item->id] ?? []);
+            }
+        }
 
         return response()->json([
             'data' => $orders->map(fn (Order $order) => $this->serializeOrder($order)),
@@ -189,7 +227,7 @@ class OrderController extends Controller
             $locked->status = 'confirmed';
             $locked->confirmed_at = now();
             $locked->save();
-            $locked->load(['user:id,full_name,email', 'items.product', 'items.details.batch']);
+            $locked->load(['user:id,full_name,email', 'items.product', 'items.details.batch', 'payments']);
 
             return $locked;
         });
@@ -202,6 +240,8 @@ class OrderController extends Controller
 
     private function serializeOrder(Order $order): array
     {
+        $latestPayment = $order->payments->sortByDesc('id')->first();
+
         return [
             'id' => $order->id,
             'order_code' => $order->order_code,
@@ -211,6 +251,8 @@ class OrderController extends Controller
             'shipping_fee' => number_format((float) $order->shipping_fee, 2, '.', ''),
             'total_amount' => number_format((float) $order->total_amount, 2, '.', ''),
             'status' => $order->status,
+            'payment_status' => $latestPayment?->status,
+            'payment_method' => $latestPayment?->method,
             'confirmed_at' => $order->confirmed_at?->format('Y-m-d H:i:s'),
             'created_at' => $order->created_at?->format('Y-m-d H:i:s'),
             'customer' => $order->user ? [
@@ -230,6 +272,7 @@ class OrderController extends Controller
                     'quantity' => number_format((float) $detail->quantity, 2, '.', ''),
                     'allocated_at' => $detail->allocated_at?->format('Y-m-d H:i:s'),
                 ]),
+                'planned_batches' => $item->getAttribute('planned_batches') ?? [],
             ]),
         ];
     }

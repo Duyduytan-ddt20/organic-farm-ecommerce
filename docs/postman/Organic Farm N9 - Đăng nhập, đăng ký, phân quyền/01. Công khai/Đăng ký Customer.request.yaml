@@ -1,0 +1,32 @@
+$kind: http-request
+description: role_name Admin trong body bị bỏ qua. Tài khoản mới luôn là Customer.
+url: "{{baseUrl}}/api/v1/auth/register"
+method: POST
+headers:
+  Accept: application/json
+  Content-Type: application/json
+body:
+  type: text
+  content: |-
+    {
+      "full_name": "Khách hàng mới",
+      "email": "{{registerEmail}}",
+      "phone": "0901234567",
+      "password": "12345678",
+      "password_confirmation": "12345678",
+      "role_name": "Admin"
+    }
+scripts:
+  - type: beforeRequest
+    code: |-
+      const email = 'khach.' + Date.now() + '@organicfarm.vn';
+      pm.collectionVariables.set('registerEmail', email);
+    language: text/javascript
+  - type: afterResponse
+    code: |-
+      pm.test('Đăng ký 201', function () { pm.response.to.have.status(201); });
+      const json = pm.response.json();
+      pm.expect(json.data.user.role.role_name).to.eql('Customer');
+      pm.collectionVariables.set('customerToken', json.data.token);
+    language: text/javascript
+order: 2000

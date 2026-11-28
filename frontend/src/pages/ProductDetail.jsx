@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import axios from 'axios';
 import { QRCodeSVG } from 'qrcode.react';
@@ -51,10 +51,11 @@ export default function ProductDetail() {
     );
   }
 
-  const traceUrl = selectedBatch ? `${APP_URL}/trace/${selectedBatch.ma_lo}` : '';
-  const unitPrice = selectedBatch && selectedBatch.phan_tram_giam > 0
-    ? product.gia_ban_co_ban * (1 - selectedBatch.phan_tram_giam / 100)
-    : Number(product.gia_ban_co_ban);
+  const tracePath = selectedBatch?.qr_token
+    ? `/truy-xuat/${encodeURIComponent(selectedBatch.qr_token)}`
+    : '';
+  const traceUrl = tracePath ? new URL(tracePath, APP_URL).toString() : '';
+  const unitPrice = Number(product.base_price);
 
   return (
     <div className="min-h-screen bg-gray-50 pb-28 md:pb-12">
@@ -73,13 +74,13 @@ export default function ProductDetail() {
         <div className="space-y-4">
           <div className="relative rounded-2xl overflow-hidden bg-white shadow-sm border border-gray-100 aspect-square">
             <img
-              src={product.hinh_anh || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=800&q=80'}
-              alt={product.ten_san_pham}
+              src={product.image_path || 'https://images.unsplash.com/photo-1592924357228-91a4daadcfea?auto=format&fit=crop&w=800&q=80'}
+              alt={product.name}
               className="w-full h-full object-cover"
             />
             {selectedBatch && (
               <span className="absolute bottom-3 left-3 bg-green-600 text-white text-xs font-semibold px-3 py-1.5 rounded-full shadow">
-                Thu hoạch: {selectedBatch.ngay_thu_hoach}
+                Thu hoạch: {selectedBatch.harvested_at}
               </span>
             )}
           </div>
@@ -92,37 +93,39 @@ export default function ProductDetail() {
                   Lô hàng đang xuất (FEFO)
                 </span>
                 <span className="text-xs font-mono font-semibold bg-white text-green-900 px-2.5 py-1 rounded border border-green-300">
-                  {selectedBatch.ma_lo}
+                  {selectedBatch.batch_code}
                 </span>
               </div>
 
               <div className="grid grid-cols-3 gap-2 text-center bg-white rounded-xl p-2.5 border border-green-100">
                 <div>
                   <p className="text-[11px] text-gray-500">Ngày thu hoạch</p>
-                  <p className="text-xs font-bold text-gray-800">{selectedBatch.ngay_thu_hoach}</p>
+                  <p className="text-xs font-bold text-gray-800">{selectedBatch.harvested_at}</p>
                 </div>
                 <div className="border-x border-gray-100">
                   <p className="text-[11px] text-gray-500">Hạn sử dụng</p>
-                  <p className="text-xs font-bold text-red-600">{selectedBatch.ngay_het_han}</p>
+                  <p className="text-xs font-bold text-red-600">{selectedBatch.expires_at}</p>
                 </div>
                 <div>
                   <p className="text-[11px] text-gray-500">Tồn khả dụng</p>
                   <p className="text-xs font-bold text-green-700">
-                    {selectedBatch.so_luong_ton} {product.don_vi_tinh}
+                    {selectedBatch.available_quantity} {product.unit}
                   </p>
                 </div>
               </div>
 
               {/* Khối Mã QR Truy xuất nguồn gốc */}
               <div className="flex items-center gap-4 bg-white p-3 rounded-xl border border-green-200">
-                <div className="p-2 bg-white border border-gray-200 rounded-lg shrink-0">
-                  <QRCodeSVG
-                    value={traceUrl}
-                    size={88}
-                    level="H"
-                    includeMargin={false}
-                  />
-                </div>
+                {traceUrl ? (
+                  <div className="shrink-0 rounded-lg border border-gray-200 bg-white p-2">
+                    <QRCodeSVG
+                      value={traceUrl}
+                      size={144}
+                      level="H"
+                      includeMargin
+                    />
+                  </div>
+                ) : null}
                 <div className="space-y-1">
                   <p className="text-xs font-bold text-gray-900">
                     Quét mã QR truy xuất nguồn gốc
@@ -130,12 +133,14 @@ export default function ProductDetail() {
                   <p className="text-[11px] text-gray-600 leading-relaxed">
                     Dùng camera điện thoại quét trực tiếp mã này để kiểm chứng nhật ký trồng trọt tại vườn.
                   </p>
-                  <Link
-                    to={`/trace/${selectedBatch.ma_lo}`}
-                    className="inline-block text-xs font-semibold text-green-700 hover:underline pt-0.5"
-                  >
-                    Xem trang truy xuất công khai →
-                  </Link>
+                  {tracePath ? (
+                    <Link
+                      to={tracePath}
+                      className="inline-block text-xs font-semibold text-green-700 hover:underline pt-0.5"
+                    >
+                      Xem trang truy xuất công khai →
+                    </Link>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -150,20 +155,18 @@ export default function ProductDetail() {
         <div className="space-y-6">
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 space-y-4">
             <div>
-              <p className="text-xs text-gray-500 font-medium">{product.category?.ten_danh_muc}</p>
-              <h1 className="text-2xl font-bold text-gray-900 mt-0.5">{product.ten_san_pham}</h1>
+              <p className="text-xs text-gray-500 font-medium">{product.category?.name}</p>
+              <h1 className="text-2xl font-bold text-gray-900 mt-0.5">{product.name}</h1>
+              {product.description ? (
+                <p className="mt-2 text-sm leading-6 text-gray-600">{product.description}</p>
+              ) : null}
             </div>
 
             <div className="flex items-baseline gap-2.5">
               <span className="text-2xl font-extrabold text-green-700">
                 {unitPrice.toLocaleString('vi-VN')}đ
               </span>
-              <span className="text-sm text-gray-500">/ {product.don_vi_tinh}</span>
-              {selectedBatch?.phan_tram_giam > 0 && (
-                <span className="text-xs font-bold bg-red-100 text-red-700 px-2 py-0.5 rounded">
-                  -{selectedBatch.phan_tram_giam}% Xả hàng tươi
-                </span>
-              )}
+              <span className="text-sm text-gray-500">/ {product.unit}</span>
             </div>
 
             {/* Chọn hình thức Mua lẻ hoặc Đặt gói định kỳ */}
@@ -196,7 +199,7 @@ export default function ProductDetail() {
 
             {/* Chọn số lượng */}
             <div className="flex items-center justify-between pt-2">
-              <span className="text-sm font-medium text-gray-700">Số lượng ({product.don_vi_tinh}):</span>
+              <span className="text-sm font-medium text-gray-700">Số lượng ({product.unit}):</span>
               <div className="flex items-center border border-gray-300 rounded-lg overflow-hidden">
                 <button
                   type="button"
@@ -220,7 +223,7 @@ export default function ProductDetail() {
           {/* Dòng thời gian (Timeline) Nhật ký canh tác thực tế */}
           <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100">
             <h2 className="text-base font-bold text-gray-900 mb-4">
-              Nhật ký canh tác lô {selectedBatch?.ma_lo}
+              Nhật ký canh tác lô {selectedBatch?.batch_code}
             </h2>
 
             {selectedBatch?.farming_logs && selectedBatch.farming_logs.length > 0 ? (
@@ -231,21 +234,21 @@ export default function ProductDetail() {
                       <span className="w-2 h-2 bg-white rounded-full"></span>
                     </span>
                     <time className="block text-xs font-semibold text-green-700">
-                      {log.thoi_gian}
+                      {log.performed_at}
                     </time>
-                    <h3 className="text-sm font-bold text-gray-900 mt-0.5">{log.hanh_dong}</h3>
-                    {log.ghi_chu && (
-                      <p className="text-xs text-gray-600 mt-1 leading-relaxed">{log.ghi_chu}</p>
+                    <h3 className="text-sm font-bold text-gray-900 mt-0.5">{log.activity}</h3>
+                    {log.description && (
+                      <p className="text-xs text-gray-600 mt-1 leading-relaxed">{log.description}</p>
                     )}
-                    {log.hinh_anh_minh_chung && (
+                    {log.image_path && (
                       <img
-                        src={log.hinh_anh_minh_chung}
-                        alt={log.hanh_dong}
+                        src={log.image_path}
+                        alt={log.activity}
                         className="mt-2.5 rounded-xl w-full max-h-48 object-cover border border-gray-200"
                       />
                     )}
                     <p className="text-[11px] text-gray-400 mt-1.5">
-                      Ghi nhận bởi: {log.staff?.ho_ten || 'Kỹ thuật viên nông trại'}
+                      Ghi nhận bởi: {log.staff?.full_name || 'Kỹ thuật viên nông trại'}
                     </p>
                   </li>
                 ))}

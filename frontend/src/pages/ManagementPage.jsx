@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   CalendarDays,
   Download,
@@ -6,6 +6,7 @@ import {
   PackageMinus,
   QrCode,
   RefreshCw,
+  Search,
   Sprout,
   TriangleAlert,
 } from 'lucide-react';
@@ -15,6 +16,7 @@ import Button from '../components/Button';
 import TextField from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
 import { apiError } from '../utils/apiError';
+import { normalizeSearchText } from '../utils/searchText';
 
 function toApiDateTime(value) {
   if (!value) return undefined;
@@ -28,6 +30,13 @@ function formatQuantity(value) {
   });
 }
 
+const batchStatusLabels = {
+  growing: 'Đang trồng',
+  available: 'Sẵn sàng',
+  blocked: 'Tạm khóa',
+  closed: 'Đã đóng',
+};
+
 export default function ManagementPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -35,7 +44,15 @@ export default function ManagementPage() {
   const permitted = roleName === 'Staff' || roleName === 'Admin';
 
   const [batchId, setBatchId] = useState('');
+  const [batches, setBatches] = useState([]);
+  const [batchSearch, setBatchSearch] = useState('');
+  const [batchesLoading, setBatchesLoading] = useState(true);
+  const [batchesError, setBatchesError] = useState('');
+  const [batchesRefreshKey, setBatchesRefreshKey] = useState(0);
+  const [batchActionError, setBatchActionError] = useState('');
   const [batch, setBatch] = useState(null);
+  const batchDetailsRef = useRef(null);
+  const batchToScrollRef = useRef(null);
   const [qrSvg, setQrSvg] = useState('');
   const [farmingLogs, setFarmingLogs] = useState([]);
   const [disposals, setDisposals] = useState([]);
@@ -62,13 +79,56 @@ export default function ManagementPage() {
     if (user && !permitted) navigate('/');
   }, [navigate, permitted, user]);
 
-  async function loadBatch(event) {
+  useEffect(() => {
+    if (!permitted) {
+      return undefined;
+    }
+
+    let active = true;
+    axiosClient.get('/batches')
+      .then((response) => {
+        if (!Array.isArray(response.data)) {
+          throw new Error('Máy chủ trả về danh sách lô hàng không hợp lệ.');
+        }
+        if (active) {
+          setBatches(response.data);
+          setBatchesError('');
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setBatchesError(apiError(error).message);
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setBatchesLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [batchesRefreshKey, permitted]);
+
+  useEffect(() => {
+    if (batch && batchToScrollRef.current === batch.id) {
+      batchDetailsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      batchToScrollRef.current = null;
+    }
+  }, [batch]);
+
+  async function loadBatch(event, requestedBatchId = batchId) {
     event?.preventDefault();
-    if (!batchId.trim()) {
+    const selectedBatchId = String(requestedBatchId).trim();
+    if (!selectedBatchId) {
       setErrors({ batch_id: 'Vui lòng nhập ID lô.' });
       return;
     }
 
+    setBatchId(selectedBatchId);
+    setBatchActionError('');
+    batchToScrollRef.current = Number(selectedBatchId);
     setLoading(true);
     setMessage('');
     setErrors({});
@@ -76,22 +136,25 @@ export default function ManagementPage() {
     setQrSvg('');
 
     try {
-      const batchResponse = await axiosClient.get(`/batches/${batchId.trim()}`);
-      const loadedBatch = batchResponse.data.data;
+      const batchResponse = await axiosClient.get(`/batches/${selectedBatchId}`);
+      const loadedBatch = batchResponse.data;
       setBatch(loadedBatch);
 
       const [logsResponse, disposalsResponse] = await Promise.all([
-        axiosClient.get(`/batches/${loadedBatch.id}/farming-logs`).catch(() => ({ data: { data: [] } })),
-        axiosClient.get(`/batches/${loadedBatch.id}/disposals`).catch(() => ({ data: { data: [] } })),
+        axiosClient.get(`/batches/${loadedBatch.id}/farming-logs`),
+        axiosClient.get(`/batches/${loadedBatch.id}/disposals`),
       ]);
-      setFarmingLogs(logsResponse.data.data ?? []);
-      setDisposals(disposalsResponse.data.data ?? []);
+      if (!Array.isArray(logsResponse.data) || !Array.isArray(disposalsResponse.data)) {
+        throw new Error('Máy chủ trả về lịch sử lô hàng không hợp lệ.');
+      }
+      setFarmingLogs(logsResponse.data);
+      setDisposals(disposalsResponse.data);
 
       try {
         const qrResponse = await axiosClient.get(`/batches/${loadedBatch.id}/qr`, {
           responseType: 'text',
         });
-        setQrSvg(qrResponse.data);
+        setQrSvg(qrResponse);
       } catch (qrError) {
         setErrors({
           qr: qrError.response?.data?.message || 'Không thể tải mã QR của lô.',
@@ -99,6 +162,8 @@ export default function ManagementPage() {
       }
     } catch (error) {
       const parsed = apiError(error);
+      batchToScrollRef.current = null;
+      setBatchActionError(parsed.message);
       setErrors({ batch_id: parsed.message });
     } finally {
       setLoading(false);
@@ -131,7 +196,7 @@ export default function ManagementPage() {
       const response = await axiosClient.post(`/batches/${batch.id}/farming-logs`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      setFarmingLogs((current) => [...current, response.data.data]);
+      setFarmingLogs((current) => [...current, response.data]);
       setMessage('Đã ghi nhật ký canh tác.');
       setLogForm({ activity: 'Gieo trồng', description: '', performed_at: '' });
       setLogImage(null);
@@ -161,15 +226,25 @@ export default function ManagementPage() {
       const response = await axiosClient.post(`/batches/${batch.id}/disposals`, formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
+      const disposal = response.data;
       setBatch((current) => ({
         ...current,
-        available_quantity: response.data.data.available_quantity,
-        status: response.data.data.status,
+        available_quantity: disposal.available_quantity,
+        status: disposal.status,
       }));
+      setBatches((current) => current.map((listedBatch) => (
+        listedBatch.id === batch.id
+          ? {
+            ...listedBatch,
+            available_quantity: disposal.available_quantity,
+            status: disposal.status,
+          }
+          : listedBatch
+      )));
       setMessage('Đã ghi nhận xuất hủy.');
       setDisposalForm({ quantity: '', reason: '', note: '', disposed_at: '' });
       setDisposalImage(null);
-      setDisposals((current) => [response.data.data, ...current]);
+      setDisposals((current) => [disposal, ...current]);
     } catch (error) {
       const parsed = apiError(error);
       setMessage(parsed.message);
@@ -194,6 +269,17 @@ export default function ManagementPage() {
   const batchCode = batch?.batch_code || batch?.ma_lo || 'Chưa xác định';
   const productName = batch?.product?.name || batch?.product?.ten_san_pham || 'Chưa có thông tin';
   const unit = batch?.product?.unit || batch?.product?.don_vi_tinh || '';
+  const batchSearchTerm = normalizeSearchText(batchSearch);
+  const visibleBatches = batches.filter((listedBatch) => (
+    !batchSearchTerm
+    || normalizeSearchText([
+      listedBatch.batch_code,
+      listedBatch.id,
+      listedBatch.product?.name,
+      listedBatch.growing_location,
+      batchStatusLabels[listedBatch.status] || listedBatch.status,
+    ].filter(Boolean).join(' ')).includes(batchSearchTerm)
+  ));
   const traceUrl = batch?.qr_token
     ? `${window.location.origin}/truy-xuat/${encodeURIComponent(batch.qr_token)}`
     : '';
@@ -238,9 +324,100 @@ export default function ManagementPage() {
         </form>
       </section>
 
+      <section className="rounded-2xl bg-white p-5 shadow-sm sm:p-7">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-slate-900">Danh sách lô hàng</h2>
+            <p className="mt-1 text-sm text-slate-600">Chọn một lô để xem QR, nhật ký canh tác và xuất hủy.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setBatchesError('');
+              setBatchesLoading(true);
+              setBatchesRefreshKey((current) => current + 1);
+            }}
+            disabled={batchesLoading}
+            className="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700 disabled:opacity-50"
+          >
+            <RefreshCw size={16} />
+            Tải lại danh sách
+          </button>
+        </div>
+
+        {batchesLoading ? (
+          <p role="status" className="mt-4 text-sm text-slate-600">Đang tải lô hàng...</p>
+        ) : null}
+        {batchesError ? (
+          <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">{batchesError}</p>
+        ) : null}
+        {batchActionError ? (
+          <p role="alert" className="mt-4 rounded-xl bg-red-50 p-4 text-sm text-red-700">
+            Không thể mở lô: {batchActionError}
+          </p>
+        ) : null}
+        <label className="relative mt-4 block">
+          <span className="sr-only">Tìm kiếm lô hàng</span>
+          <Search
+            aria-hidden="true"
+            size={18}
+            className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+          />
+          <input
+            type="search"
+            value={batchSearch}
+            onChange={(event) => setBatchSearch(event.target.value)}
+            placeholder="Tìm theo mã lô, sản phẩm, ID hoặc khu vực"
+            className="min-h-12 w-full rounded-xl border border-slate-300 bg-white pl-11 pr-4 text-base text-slate-900 outline-none focus:border-emerald-700"
+          />
+        </label>
+        {!batchesLoading && !batchesError && batches.length === 0 ? (
+          <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">Chưa có lô hàng nào.</p>
+        ) : null}
+        {!batchesLoading && !batchesError && batches.length > 0 && visibleBatches.length === 0 ? (
+          <p className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-slate-600">Không tìm thấy lô hàng phù hợp.</p>
+        ) : null}
+        {batches.length > 0 ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {visibleBatches.map((listedBatch) => (
+              <article
+                key={listedBatch.id}
+                className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 p-4"
+              >
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-bold text-slate-900">{listedBatch.batch_code}</p>
+                    <span className="rounded-full bg-emerald-50 px-2 py-1 text-xs font-semibold text-emerald-800">
+                      {batchStatusLabels[listedBatch.status] || listedBatch.status}
+                    </span>
+                  </div>
+                  <p className="mt-1 truncate text-sm text-slate-600">
+                    {listedBatch.product?.name || 'Chưa có thông tin sản phẩm'} · ID {listedBatch.id}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-500">
+                    Tồn: {formatQuantity(listedBatch.available_quantity)} {listedBatch.product?.unit || ''}
+                    {' · Hạn dùng: '}
+                    {listedBatch.expires_at ? String(listedBatch.expires_at).slice(0, 10) : 'Chưa cập nhật'}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  className="min-h-10 shrink-0 px-3 py-2 text-sm"
+                  disabled={loading}
+                  onClick={() => loadBatch(undefined, listedBatch.id)}
+                >
+                  {loading && batchId === String(listedBatch.id) ? 'Đang tải...' : 'Xem lô'}
+                </Button>
+              </article>
+            ))}
+          </div>
+        ) : null}
+      </section>
+
       {batch ? (
         <>
-          <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <section ref={batchDetailsRef} className="scroll-mt-6 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <article className="rounded-2xl bg-white p-4 shadow-sm">
               <p className="text-xs text-slate-500">Mã lô</p>
               <p className="mt-1 font-bold text-slate-900">{batchCode}</p>

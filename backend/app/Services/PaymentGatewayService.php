@@ -166,6 +166,7 @@ class PaymentGatewayService
         $accessKey = config('services.momo.access_key');
         $requestId = $payment->payment_reference;
         $extraData = '';
+        // 'payWithATM'
         $requestType = 'captureWallet';
         $orderInfo = 'Thanh toan don hang '.$payment->order_id;
 

@@ -30,7 +30,7 @@ export default function TracePage() {
 
       try {
         const response = await axiosClient.get(`/trace/${encodeURIComponent(qrToken)}`);
-        if (active) setData(response.data.data);
+        if (active) setData(response.data);
       } catch (requestError) {
         if (!active) return;
         setError(

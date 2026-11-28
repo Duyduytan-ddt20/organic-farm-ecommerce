@@ -89,8 +89,18 @@ class OrderFefoTest extends TestCase
             'total_amount' => '216170.00',
         ]);
 
+        $salesToken = $sales->createToken('test')->plainTextToken;
         app('auth')->forgetGuards();
-        $this->withToken($sales->createToken('test')->plainTextToken)
+        $this->withToken($salesToken)
+            ->getJson('/api/v1/sales/orders')
+            ->assertOk()
+            ->assertJsonPath('data.0.items.0.planned_batches.0.batch_code', 'CC-A01')
+            ->assertJsonPath('data.0.items.0.planned_batches.0.quantity', '3.00')
+            ->assertJsonPath('data.0.items.0.planned_batches.1.batch_code', 'CC-B02')
+            ->assertJsonPath('data.0.items.0.planned_batches.1.quantity', '2.00');
+
+        app('auth')->forgetGuards();
+        $this->withToken($salesToken)
             ->postJson('/api/v1/sales/orders/'.$orderId.'/confirm')
             ->assertOk()
             ->assertJsonPath('data.status', 'confirmed')
@@ -105,6 +115,38 @@ class OrderFefoTest extends TestCase
             'batch_id' => $first->id,
             'quantity' => '3.00',
         ]);
+    }
+
+    public function test_customer_can_check_cart_stock_without_allocating_or_changing_inventory(): void
+    {
+        $validBatch = $this->batch('CHECK-VALID', 3, now()->addDays(2)->toDateString());
+        $expiredBatch = $this->batch('CHECK-EXPIRED', 10, now()->subDay()->toDateString());
+        $emptyBatch = $this->batch('CHECK-EMPTY', 0, now()->addDay()->toDateString());
+        $customer = $this->user('Customer');
+        $token = $customer->createToken('test')->plainTextToken;
+
+        $this->withToken($token)
+            ->postJson('/api/v1/customer/cart/check-stock', [
+                'product_id' => 1,
+                'quantity' => 3,
+            ])
+            ->assertOk()
+            ->assertJsonPath('data.product_id', 1)
+            ->assertJsonPath('data.quantity', 3);
+
+        $this->withToken($token)
+            ->postJson('/api/v1/customer/cart/check-stock', [
+                'product_id' => 1,
+                'quantity' => 4,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['items']);
+
+        $this->assertDatabaseCount('orders', 0);
+        $this->assertDatabaseCount('order_details', 0);
+        $this->assertSame('3.00', number_format((float) $validBatch->refresh()->available_quantity, 2, '.', ''));
+        $this->assertSame('10.00', number_format((float) $expiredBatch->refresh()->available_quantity, 2, '.', ''));
+        $this->assertSame('0.00', number_format((float) $emptyBatch->refresh()->available_quantity, 2, '.', ''));
     }
 
     public function test_checkout_rejects_a_missing_quote_token_without_creating_an_order_or_changing_stock(): void

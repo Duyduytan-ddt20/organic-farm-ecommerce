@@ -1,21 +1,35 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Search } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import axiosClient from '../api/axiosClient';
 import Button from '../components/Button';
 import TextField from '../components/TextField';
 import { useAuth } from '../context/AuthContext';
 import { apiError } from '../utils/apiError';
+import { validateClaimEvidence } from '../utils/claimEvidence';
 import {
   AUTH_SESSION_LOCK_NAME,
   canClearRejectedCheckout,
   readAuthSnapshot,
 } from '../utils/authSession';
 import { assignProductImages } from '../utils/productImages';
+import { normalizeSearchText } from '../utils/searchText';
 
 const SHIPPING_DEBOUNCE_MS = 500;
 const MAX_DELIVERY_ADDRESS_LENGTH = 500;
 const DEFAULT_SHIPPING_RATE = 5000;
 const CHECKOUT_STORAGE_VERSION = 1;
+const PAYMENT_METHODS = [
+  { value: 'momo_sandbox', label: 'MoMo', description: 'Thanh toán qua MoMo hoặc mô phỏng khi chạy local.' },
+  ...(import.meta.env.DEV
+    ? [{
+      value: 'demo_local',
+      label: 'Demo thanh toán thành công (local-only)',
+      description: 'Mô phỏng thanh toán để demo; không thu tiền thật và chỉ hoạt động với backend local/testing.',
+    }]
+    : []),
+  { value: 'cod', label: 'Thanh toán khi nhận hàng', description: 'Trả tiền mặt khi nhận đơn (COD).' },
+];
 const VietnamDeliveryAddressFields = lazy(() => import('../components/VietnamDeliveryAddressFields'));
 
 function formatMoney(value) {
@@ -144,25 +158,60 @@ async function checkoutFingerprint(payload, idempotencyKey) {
 
 export default function ShopPage() {
   const { user } = useAuth();
+  const location = useLocation();
   const navigate = useNavigate();
   const userId = user?.id == null ? '' : String(user.id);
   const [initialCheckoutState] = useState(() => readCheckoutRecord(userId));
+  const purchaseProduct = location.state?.purchaseProduct;
+  const purchaseProductId = Number(purchaseProduct?.id);
+  const validPurchaseProduct = Number.isSafeInteger(purchaseProductId)
+    && purchaseProductId > 0
+    && Boolean(purchaseProduct?.is_active);
   const [products, setProducts] = useState([]);
+  const [productSearch, setProductSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [pendingCartProducts, setPendingCartProducts] = useState({});
+  const [quantityDrafts, setQuantityDrafts] = useState({});
+  const [toast, setToast] = useState(null);
   const [cart, setCart] = useState(() => (
     initialCheckoutState.record?.status === 'pending'
       ? initialCheckoutState.record.snapshot.cart
-      : {}
+      : validPurchaseProduct
+        ? {
+          [purchaseProductId]: {
+            product: purchaseProduct,
+            quantity: 1,
+          },
+        }
+        : {}
   ));
   const [orders, setOrders] = useState([]);
+  const [claimMessages, setClaimMessages] = useState({});
+  const [claimSubmittingKey, setClaimSubmittingKey] = useState(null);
   const [form, setForm] = useState(() => customerForm(
     user,
     initialCheckoutState.record?.status === 'pending'
       ? initialCheckoutState.record.snapshot.form
       : {},
   ));
-  const [message, setMessage] = useState('');
-  const [messageType, setMessageType] = useState('success');
+  const [paymentMethod, setPaymentMethod] = useState(
+    initialCheckoutState.record?.snapshot?.paymentMethod || 'cod',
+  );
+  const [message, setMessage] = useState(() => {
+    if (location.state?.purchaseProduct && !validPurchaseProduct) {
+      return 'Sản phẩm không còn được bán. Vui lòng chọn sản phẩm khác.';
+    }
+    if (validPurchaseProduct && initialCheckoutState.record?.status === 'pending') {
+      return 'Bạn đang có checkout chưa hoàn tất. Hãy hoàn tất checkout hiện tại trước khi thêm sản phẩm.';
+    }
+    return '';
+  });
+  const [messageType, setMessageType] = useState(() => (
+    message || (validPurchaseProduct && initialCheckoutState.record?.status === 'pending')
+      ? 'error'
+      : 'success'
+  ));
+  const [successOrder, setSuccessOrder] = useState(null);
   const [errors, setErrors] = useState({});
   const [shippingQuote, setShippingQuote] = useState(() => (
     initialCheckoutState.record?.status === 'pending'
@@ -175,17 +224,41 @@ export default function ShopPage() {
   const [checkoutLoading, setCheckoutLoading] = useState(false);
   const [checkoutRecord, setCheckoutRecord] = useState(initialCheckoutState.record);
   const [checkoutStorageError, setCheckoutStorageError] = useState(initialCheckoutState.error);
+  const [paymentRetryOrderId, setPaymentRetryOrderId] = useState(
+    initialCheckoutState.record?.status === 'pending'
+      ? initialCheckoutState.record.snapshot?.orderId || null
+      : null,
+  );
   const checkoutStateReady = Boolean(userId);
-  const [newCheckoutIntent, setNewCheckoutIntent] = useState(false);
+  const [newCheckoutIntent, setNewCheckoutIntent] = useState(
+    () => validPurchaseProduct && initialCheckoutState.record?.status === 'completed',
+  );
   const shippingRequestId = useRef(0);
   const checkoutInFlight = useRef(false);
+  const cartOperationIdsRef = useRef(new Set());
+  const toastTimerRef = useRef(null);
   const checkoutRecordRef = useRef(initialCheckoutState.record);
   const activeUserIdRef = useRef(userId);
+
+  function showCartToast(text, type = 'success') {
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+
+    setToast({ text, type });
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3500);
+  }
 
   function updateCheckoutRecord(record) {
     checkoutRecordRef.current = record;
     setCheckoutRecord(record);
   }
+
+  useEffect(() => () => {
+    if (toastTimerRef.current) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+  }, []);
 
   useEffect(() => {
     if (activeUserIdRef.current === userId) {
@@ -194,14 +267,23 @@ export default function ShopPage() {
 
     activeUserIdRef.current = userId;
     shippingRequestId.current += 1;
+    cartOperationIdsRef.current.clear();
+    setPendingCartProducts({});
+    setQuantityDrafts({});
     const restored = readCheckoutRecord(userId);
     const pending = restored.record?.status === 'pending' ? restored.record : null;
     checkoutRecordRef.current = restored.record;
     setCheckoutRecord(restored.record);
     setCheckoutStorageError(restored.error);
     setNewCheckoutIntent(false);
+    setPaymentRetryOrderId(
+      pending?.snapshot?.orderId
+        ? Number(pending.snapshot.orderId)
+        : null,
+    );
     setCart(pending?.snapshot.cart || {});
     setForm(customerForm(user, pending?.snapshot.form));
+    setPaymentMethod(pending?.snapshot.paymentMethod || 'cod');
     setShippingQuote(pending?.snapshot.shippingQuote || null);
     setOrders([]);
     setShippingLoading(false);
@@ -229,6 +311,12 @@ export default function ShopPage() {
   }, [navigate, user]);
 
   useEffect(() => {
+    if (location.state?.purchaseProduct) {
+      navigate(location.pathname, { replace: true, state: null });
+    }
+  }, [location.pathname, location.state, navigate]);
+
+  useEffect(() => {
     if (!userId) {
       return undefined;
     }
@@ -240,13 +328,17 @@ export default function ShopPage() {
       }
 
       const { record, error } = parseCheckoutRecord(event.newValue, userId);
-      const previousRecord = checkoutRecordRef.current;
       setCheckoutStorageError(error);
       checkoutRecordRef.current = record;
       setCheckoutRecord(record);
 
       if (record?.status === 'pending') {
         setNewCheckoutIntent(false);
+        setPaymentRetryOrderId(
+          record.snapshot?.orderId
+            ? Number(record.snapshot.orderId)
+            : null,
+        );
         setCart((current) => (
           Object.values(current).some((entry) => Number(entry.quantity) > 0)
             ? current
@@ -260,13 +352,15 @@ export default function ShopPage() {
             : current
         ));
         setShippingQuote((current) => current || record.snapshot.shippingQuote);
-      } else if (
-        record?.status === 'completed'
-        && previousRecord?.status === 'pending'
-        && previousRecord.idempotencyKey === record.idempotencyKey
-      ) {
+      } else if (record?.status === 'completed') {
         setCart({});
+        setForm(customerForm(user, {}));
+        setPaymentMethod('cod');
         setShippingQuote(null);
+        setShippingError('');
+        setErrors({});
+        setNewCheckoutIntent(false);
+        setPaymentRetryOrderId(null);
         setMessage('Đơn hàng này đã được xác nhận ở một tab khác.');
         setMessageType('success');
       }
@@ -359,40 +453,217 @@ export default function ShopPage() {
     shippingRetryVersion,
   ]);
 
-  function addProduct(product) {
+  async function checkAndUpdateCart(product, quantity, operation) {
+    const productId = Number(product.id);
+    const productKey = String(productId);
+    const operationId = `${userId}:${productKey}`;
+
     if (checkoutInFlight.current || checkoutRecord?.status === 'pending') {
+      showCartToast('Hoàn tất checkout đang chờ trước khi thay đổi giỏ hàng.', 'error');
+      return;
+    }
+
+    if (cartOperationIdsRef.current.has(operationId)) {
+      return;
+    }
+
+    if (!Number.isFinite(quantity) || quantity < 0) {
+      showCartToast('Vui lòng nhập số lượng hợp lệ.', 'error');
+      return;
+    }
+
+    let authSnapshot;
+    try {
+      authSnapshot = readAuthSnapshot();
+    } catch {
+      showCartToast('Không thể xác minh phiên đăng nhập. Vui lòng đăng nhập lại.', 'error');
       return;
     }
 
     if (
-      !Object.values(cart).some((entry) => Number(entry.quantity) > 0)
-      && checkoutRecord?.status === 'completed'
+      !userId
+      || activeUserIdRef.current !== userId
+      || authSnapshot.userId !== userId
+      || !authSnapshot.token
     ) {
-      setNewCheckoutIntent(true);
-    }
-
-    setCart((current) => ({
-      ...current,
-      [product.id]: {
-        product,
-        quantity: Number(current[product.id]?.quantity || 0) + 1,
-      },
-    }));
-  }
-
-  function updateQuantity(productId, quantity) {
-    if (checkoutInFlight.current || checkoutRecord?.status === 'pending') {
+      showCartToast('Tài khoản đăng nhập đã thay đổi. Vui lòng tải lại trang.', 'error');
       return;
     }
 
-    if (checkoutRecord?.status === 'completed') {
-      setNewCheckoutIntent(true);
+    cartOperationIdsRef.current.add(operationId);
+    setPendingCartProducts((current) => ({ ...current, [productKey]: true }));
+
+    try {
+      await axiosClient.post('/customer/cart/check-stock', {
+        product_id: productId,
+        quantity,
+      }, {
+        expectedAuthUserId: userId,
+        expectedAuthSessionId: authSnapshot.sessionId,
+      });
+
+      if (activeUserIdRef.current !== userId) {
+        return;
+      }
+
+      setCart((current) => {
+        const next = { ...current };
+        if (quantity === 0) {
+          delete next[productKey];
+        } else {
+          next[productKey] = { product, quantity };
+        }
+        return next;
+      });
+
+      if (checkoutRecord?.status === 'completed') {
+        setNewCheckoutIntent(true);
+      }
+
+      showCartToast(
+        quantity === 0
+          ? 'Đã xóa sản phẩm khỏi giỏ hàng.'
+          : operation === 'add'
+            ? 'Đã thêm sản phẩm vào giỏ hàng.'
+            : 'Đã cập nhật số lượng trong giỏ hàng.',
+      );
+    } catch (error) {
+      if (activeUserIdRef.current === userId) {
+        const parsed = apiError(error);
+        showCartToast(Object.values(parsed.errors)[0] || parsed.message, 'error');
+      }
+    } finally {
+      cartOperationIdsRef.current.delete(operationId);
+      if (activeUserIdRef.current === userId) {
+        setPendingCartProducts((current) => {
+          const next = { ...current };
+          delete next[productKey];
+          return next;
+        });
+        setQuantityDrafts((current) => {
+          const next = { ...current };
+          delete next[productKey];
+          return next;
+        });
+      }
+    }
+  }
+
+  function addProduct(product) {
+    const nextQuantity = Number(cart[product.id]?.quantity || 0) + 1;
+    void checkAndUpdateCart(product, nextQuantity, 'add');
+  }
+
+  function updateQuantity(productId, quantity) {
+    const productKey = String(productId);
+    const product = cart[productKey]?.product;
+    const quantityText = String(quantity).trim();
+    const nextQuantity = Number(quantityText);
+
+    if (!product) {
+      return;
     }
 
-    setCart((current) => ({
-      ...current,
-      [productId]: { ...current[productId], quantity: Number(quantity) },
-    }));
+    if (!quantityText || !Number.isFinite(nextQuantity) || nextQuantity < 0) {
+      setQuantityDrafts((current) => {
+        const next = { ...current };
+        delete next[productKey];
+        return next;
+      });
+      showCartToast('Vui lòng nhập số lượng hợp lệ.', 'error');
+      return;
+    }
+
+    if (nextQuantity === Number(cart[productKey].quantity)) {
+      setQuantityDrafts((current) => {
+        const next = { ...current };
+        delete next[productKey];
+        return next;
+      });
+      return;
+    }
+
+    void checkAndUpdateCart(product, nextQuantity, 'quantity');
+  }
+
+  function updateClaimMessage(key, type, text) {
+    setClaimMessages((current) => ({ ...current, [key]: { type, text } }));
+  }
+
+  function validateClaimFile(event, key) {
+    const file = event.currentTarget.files?.[0];
+    if (!file) {
+      return;
+    }
+
+    const validationMessage = validateClaimEvidence(file);
+    if (validationMessage) {
+      event.currentTarget.value = '';
+      updateClaimMessage(key, 'error', validationMessage);
+      return;
+    }
+
+    setClaimMessages((current) => {
+      const next = { ...current };
+      delete next[key];
+      return next;
+    });
+  }
+
+  async function submitClaim(event, order, item) {
+    event.preventDefault();
+    const formElement = event.currentTarget;
+    const claimKey = `${order.id}:${item.id}`;
+    const formData = new FormData(formElement);
+    const evidence = formData.get('evidence');
+    const fileError = validateClaimEvidence(evidence);
+
+    if (fileError) {
+      updateClaimMessage(claimKey, 'error', fileError);
+      return;
+    }
+
+    const claimedQuantity = Number(formData.get('claimed_quantity'));
+    if (
+      !Number.isFinite(claimedQuantity)
+      || claimedQuantity <= 0
+      || claimedQuantity > Number(item.quantity)
+    ) {
+      updateClaimMessage(
+        claimKey,
+        'error',
+        'Số lượng khiếu nại phải lớn hơn 0 và không vượt quá số lượng đã mua.',
+      );
+      return;
+    }
+
+    formData.set('order_item_id', String(item.id));
+    formData.set('claimed_quantity', String(claimedQuantity));
+    setClaimSubmittingKey(claimKey);
+    setClaimMessages((current) => {
+      const next = { ...current };
+      delete next[claimKey];
+      return next;
+    });
+
+    try {
+      const response = await axiosClient.post(
+        `/customer/orders/${order.id}/claims`,
+        formData,
+        { headers: { 'Content-Type': 'multipart/form-data' } },
+      );
+      updateClaimMessage(claimKey, 'success', response.message);
+      formElement.reset();
+    } catch (error) {
+      const parsed = apiError(error);
+      updateClaimMessage(
+        claimKey,
+        'error',
+        Object.values(parsed.errors)[0] || parsed.message,
+      );
+    } finally {
+      setClaimSubmittingKey(null);
+    }
   }
 
   function updateDeliveryAddress(address, locationFields = {}) {
@@ -474,10 +745,109 @@ export default function ShopPage() {
     setForm((current) => ({ ...current, [field]: value }));
   }
 
+  function resetForNewCheckout() {
+    setCart({});
+    setForm(customerForm(user, {}));
+    setPaymentMethod('cod');
+    setShippingQuote(null);
+    setShippingError('');
+    setErrors({});
+    setNewCheckoutIntent(false);
+    setPaymentRetryOrderId(null);
+  }
+
+  async function retryPaymentInitialization() {
+    if (!paymentRetryOrderId || checkoutLoading) {
+      return;
+    }
+
+    const pendingRecord = checkoutRecordRef.current?.status === 'pending'
+      ? checkoutRecordRef.current
+      : null;
+    if (!pendingRecord) {
+      setMessage('Không tìm thấy trạng thái checkout đang chờ. Vui lòng tải lại trang.');
+      setMessageType('error');
+      return;
+    }
+
+    setCheckoutLoading(true);
+    setMessage('');
+    setMessageType('success');
+
+    try {
+      if (paymentMethod === 'cod') {
+        const completedRecord = {
+          version: CHECKOUT_STORAGE_VERSION,
+          userId,
+          idempotencyKey: pendingRecord.idempotencyKey,
+          status: 'completed',
+          fingerprint: pendingRecord.fingerprint,
+        };
+        writeCheckoutRecord(userId, completedRecord);
+        updateCheckoutRecord(completedRecord);
+        resetForNewCheckout();
+        setMessage('Đơn hàng đã được xác nhận bằng thanh toán khi nhận hàng.');
+        setMessageType('success');
+        return;
+      }
+
+      const activeSession = readAuthSnapshot();
+      const isLocalDemo = paymentMethod === 'demo_local';
+      const paymentResponse = await axiosClient.post(
+        isLocalDemo ? '/payments/demo/confirm' : '/payments/momo/create',
+        {
+          order_id: paymentRetryOrderId,
+        },
+        {
+          expectedAuthUserId: userId,
+          expectedAuthSessionId: activeSession.sessionId,
+        },
+      );
+      const paymentReference = paymentResponse?.data?.payment_reference;
+      const paymentUrl = isLocalDemo && paymentReference
+        ? new URL(
+          `/thanh-toan/ket-qua?payment_reference=${encodeURIComponent(paymentReference)}`,
+          window.location.origin,
+        ).href
+        : paymentResponse?.data?.payment_url || paymentResponse?.payment_url;
+      if (!paymentUrl) {
+        throw new Error('Cổng thanh toán không trả về liên kết hợp lệ.');
+      }
+
+      const destination = new URL(paymentUrl);
+      if (!['https:', 'http:'].includes(destination.protocol)) {
+        throw new Error('Liên kết thanh toán không hợp lệ.');
+      }
+
+      const completedRecord = {
+        version: CHECKOUT_STORAGE_VERSION,
+        userId,
+        idempotencyKey: pendingRecord.idempotencyKey,
+        status: 'completed',
+        fingerprint: pendingRecord.fingerprint,
+      };
+      writeCheckoutRecord(userId, completedRecord);
+      updateCheckoutRecord(completedRecord);
+      resetForNewCheckout();
+      window.location.assign(destination.href);
+    } catch (error) {
+      const parsed = apiError(error);
+      setMessage(`Không thể khởi tạo thanh toán: ${parsed.message}`);
+      setMessageType('error');
+    } finally {
+      setCheckoutLoading(false);
+    }
+  }
+
   async function checkout(event) {
     event.preventDefault();
 
     if (checkoutInFlight.current) {
+      return;
+    }
+
+    if (cartOperationIdsRef.current.size > 0) {
+      showCartToast('Đang kiểm tra tồn kho. Vui lòng đợi trước khi đặt hàng.', 'error');
       return;
     }
 
@@ -529,6 +899,7 @@ export default function ShopPage() {
       if (!cartEntries.length) {
         setCart(storedAtStart.record.snapshot.cart);
         setForm(customerForm(user, storedAtStart.record.snapshot.form));
+        setPaymentMethod(storedAtStart.record.snapshot.paymentMethod || 'cod');
         setShippingQuote(storedAtStart.record.snapshot.shippingQuote);
       }
       setMessage('Đã khôi phục checkout đang chờ. Hãy thử lại cùng nội dung, không thay đổi giỏ hàng hoặc địa chỉ.');
@@ -539,6 +910,7 @@ export default function ShopPage() {
     const currentPending = checkoutRecordRef.current?.status === 'pending'
       ? checkoutRecordRef.current
       : null;
+    const selectedPaymentMethod = currentPending?.snapshot?.paymentMethod || paymentMethod;
     const currentPayload = currentPending?.payload
       || (shippingQuote?.quote_token ? buildCheckoutPayload(form, cart, shippingQuote) : null);
     if (!currentPayload?.items?.length) {
@@ -563,6 +935,7 @@ export default function ShopPage() {
     setErrors({});
 
     let requestWasSent = false;
+    let paymentInitializationStarted = false;
     let attemptedRecord = null;
     let requestAuthSnapshot = null;
     try {
@@ -632,7 +1005,7 @@ export default function ShopPage() {
               status: 'pending',
               fingerprint,
               payload,
-              snapshot: { form: { ...form }, cart, shippingQuote },
+              snapshot: { form: { ...form }, cart, shippingQuote, paymentMethod: selectedPaymentMethod },
             };
 
           requestAuthSnapshot = readAuthSnapshot();
@@ -669,6 +1042,52 @@ export default function ShopPage() {
             expectedAuthUserId: userId,
             expectedAuthSessionId: requestAuthSnapshot.sessionId,
           });
+          const responseOrderId = Number(response?.data?.id);
+          if (Number.isInteger(responseOrderId) && responseOrderId > 0) {
+            pendingRecord.snapshot.orderId = responseOrderId;
+            if (activeUserIdRef.current === userId) {
+              setPaymentRetryOrderId(responseOrderId);
+            }
+          }
+          try {
+            writeCheckoutRecord(userId, pendingRecord);
+          } catch {
+            // Response đã được tạo; trạng thái retry có thể tiếp tục trong tab hiện tại.
+          }
+          if (activeUserIdRef.current === userId) {
+            updateCheckoutRecord(pendingRecord);
+          }
+
+          let paymentUrl = null;
+          if (selectedPaymentMethod !== 'cod') {
+            paymentInitializationStarted = true;
+            const isLocalDemo = selectedPaymentMethod === 'demo_local';
+            const paymentResponse = await axiosClient.post(
+              isLocalDemo ? '/payments/demo/confirm' : '/payments/momo/create',
+              { order_id: response.data.id },
+              {
+                expectedAuthUserId: userId,
+                expectedAuthSessionId: requestAuthSnapshot.sessionId,
+              },
+            );
+            const paymentReference = paymentResponse?.data?.payment_reference;
+            paymentUrl = isLocalDemo && paymentReference
+              ? new URL(
+                `/thanh-toan/ket-qua?payment_reference=${encodeURIComponent(paymentReference)}`,
+                window.location.origin,
+              ).href
+              : paymentResponse?.data?.payment_url || paymentResponse?.payment_url;
+            if (!paymentUrl) {
+              throw new Error('Cổng thanh toán không trả về liên kết hợp lệ.');
+            }
+
+            const destination = new URL(paymentUrl);
+            if (!['https:', 'http:'].includes(destination.protocol)) {
+              throw new Error('Liên kết thanh toán không hợp lệ.');
+            }
+            paymentUrl = destination.href;
+          }
+
           const completedRecord = {
             version: CHECKOUT_STORAGE_VERSION,
             userId,
@@ -690,6 +1109,7 @@ export default function ShopPage() {
             type: 'success',
             response,
             completionPersisted,
+            paymentUrl,
           };
         },
       );
@@ -707,10 +1127,21 @@ export default function ShopPage() {
           return;
         }
 
+        if (result.paymentUrl) {
+          if (result.completionPersisted) {
+            resetForNewCheckout();
+          }
+          window.location.assign(result.paymentUrl);
+          return;
+        }
+
         setOrders((current) => [result.response.data, ...current]);
+        setSuccessOrder({
+          orderCode: result.response.data.order_code,
+          completionPersisted: result.completionPersisted,
+        });
         if (result.completionPersisted) {
-          setCart({});
-          setShippingQuote(null);
+          resetForNewCheckout();
           setMessage('Tạo đơn hàng thành công. Đơn đang chờ nhân viên bán hàng xác nhận.');
         } else {
           setMessage('Đơn đã được tạo, nhưng trình duyệt chưa lưu được trạng thái hoàn tất. Hãy tải lại và thử lại checkout đã lưu; không bắt đầu đơn mới.');
@@ -724,6 +1155,16 @@ export default function ShopPage() {
     } catch (error) {
       const parsed = apiError(error);
       const status = error?.response?.status;
+      if (paymentInitializationStarted) {
+        if (activeUserIdRef.current === userId) {
+          const orderId = attemptedRecord?.snapshot?.orderId;
+          setPaymentRetryOrderId(orderId ? Number(orderId) : null);
+          setMessage(`Đơn đã được tạo nhưng chưa khởi tạo được thanh toán: ${parsed.message} Hãy thử lại với cùng thông tin checkout.`);
+          setMessageType('error');
+        }
+        return;
+      }
+
       const sessionState = (() => {
         try {
           const currentAuthSnapshot = readAuthSnapshot();
@@ -851,8 +1292,9 @@ export default function ShopPage() {
   }
 
   const cartEntries = Object.values(cart).filter((entry) => entry.quantity > 0);
+  const cartMutationPending = Object.keys(pendingCartProducts).length > 0;
   const checkoutUnresolved = checkoutRecord?.status === 'pending';
-  const checkoutLocked = checkoutLoading || checkoutUnresolved;
+  const checkoutLocked = checkoutLoading || (checkoutUnresolved && !paymentRetryOrderId);
   const hasLegacyDeliveryAddress = Boolean(
     checkoutLocked
     && form.delivery_address
@@ -869,12 +1311,78 @@ export default function ShopPage() {
     && shippingQuote.address === normalizeAddress(form.delivery_address),
   );
   const total = quoteIsCurrent ? subtotal + shippingQuote.shipping_fee : null;
+  const activeProducts = products.filter((product) => product.is_active);
+  const productSearchTerm = normalizeSearchText(productSearch);
+  const visibleProducts = activeProducts.filter((product) => (
+    !productSearchTerm
+    || normalizeSearchText([
+      product.name,
+      product.description,
+      product.slug,
+      product.category?.name,
+    ].filter(Boolean).join(' ')).includes(productSearchTerm)
+  ));
 
   return (
     <div className="space-y-5">
+      {toast ? (
+        <div
+          role={toast.type === 'error' ? 'alert' : 'status'}
+          aria-live={toast.type === 'error' ? 'assertive' : 'polite'}
+          className={`fixed right-4 top-4 z-[70] max-w-sm rounded-xl px-4 py-3 text-sm font-medium text-white shadow-lg ${toast.type === 'error' ? 'bg-red-700' : 'bg-emerald-700'}`}
+        >
+          {toast.text}
+        </div>
+      ) : null}
+      {successOrder ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4 backdrop-blur-xs"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="order-success-title"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-slate-100 bg-white p-6 shadow-xl">
+            <div className="flex items-center gap-3 text-emerald-700">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-emerald-100 font-bold">
+                ✓
+              </span>
+              <h2 id="order-success-title" className="text-lg font-bold text-slate-900">
+                Đặt hàng thành công
+              </h2>
+            </div>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              {successOrder.orderCode ? `Mã đơn ${successOrder.orderCode}. ` : ''}
+              Đơn hàng đang chờ nhân viên bán hàng xác nhận.
+            </p>
+            {!successOrder.completionPersisted ? (
+              <p className="mt-3 rounded-xl bg-amber-50 p-3 text-sm text-amber-800">
+                Không lưu được trạng thái hoàn tất trên trình duyệt. Vui lòng không tạo đơn mới; hãy tải lại và thử lại checkout đã lưu.
+              </p>
+            ) : null}
+            <Button className="mt-6 w-full" onClick={() => setSuccessOrder(null)}>
+              Tiếp tục
+            </Button>
+          </div>
+        </div>
+      ) : null}
       <section className="grid gap-5 lg:grid-cols-[1fr_360px]">
-        <div className="grid gap-4 sm:grid-cols-2">
-          {products.filter((product) => product.is_active).map((product) => (
+        <div className="grid content-start gap-4 sm:grid-cols-2">
+          <label className="relative block sm:col-span-2">
+            <span className="sr-only">Tìm kiếm sản phẩm</span>
+            <Search
+              aria-hidden="true"
+              size={18}
+              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+            />
+            <input
+              type="search"
+              value={productSearch}
+              onChange={(event) => setProductSearch(event.target.value)}
+              placeholder="Tìm theo tên, mô tả hoặc danh mục sản phẩm"
+              className="min-h-12 w-full rounded-xl border border-slate-300 bg-white pl-11 pr-4 text-base text-slate-900 outline-none focus:border-emerald-700"
+            />
+          </label>
+          {visibleProducts.map((product) => (
             <article key={product.id} className="rounded-2xl bg-white p-5 shadow-sm">
               <img
                 src={product.display_image}
@@ -888,16 +1396,30 @@ export default function ShopPage() {
               <p className="mt-3 font-bold text-emerald-800">
                 {formatMoney(product.base_price)} đ/{product.unit}
               </p>
-              <Button type="button" variant="secondary" className="mt-4" disabled={checkoutLocked} onClick={() => addProduct(product)}>
-                Thêm vào đơn
+              <Button
+                type="button"
+                variant="secondary"
+                className="mt-4"
+                disabled={checkoutLocked || checkoutUnresolved || pendingCartProducts[product.id]}
+                onClick={() => addProduct(product)}
+              >
+                {pendingCartProducts[product.id] ? (
+                  <>
+                    <span aria-hidden="true" className="h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent" />
+                    Đang kiểm tra tồn kho...
+                  </>
+                ) : 'Thêm vào đơn'}
               </Button>
             </article>
           ))}
           {loading ? (
-            <p role="status" className="text-sm text-slate-500">Đang tải sản phẩm...</p>
+            <p role="status" className="text-sm text-slate-500 sm:col-span-2">Đang tải sản phẩm...</p>
           ) : null}
-          {!loading && products.length === 0 ? (
-            <p className="text-sm text-slate-500">Chưa có sản phẩm đang kinh doanh.</p>
+          {!loading && activeProducts.length === 0 ? (
+            <p className="text-sm text-slate-500 sm:col-span-2">Chưa có sản phẩm đang kinh doanh.</p>
+          ) : null}
+          {!loading && activeProducts.length > 0 && visibleProducts.length === 0 ? (
+            <p className="text-sm text-slate-500 sm:col-span-2">Không tìm thấy sản phẩm phù hợp.</p>
           ) : null}
         </div>
 
@@ -908,20 +1430,38 @@ export default function ShopPage() {
           ) : (
             <div className="mt-4 space-y-3">
               {cartEntries.map((entry) => (
-                <div key={entry.product.id} className="grid grid-cols-[1fr_80px] gap-3">
+                <div key={entry.product.id} className="grid grid-cols-[1fr_auto] items-center gap-3">
                   <div>
                     <p className="text-sm font-semibold">{entry.product.name}</p>
                     <p className="text-xs text-slate-500">{formatMoney(entry.product.base_price)} đ/{entry.product.unit}</p>
                   </div>
-                  <input
-                    type="number"
-                    min="0"
-                    step="0.01"
-                    value={entry.quantity}
-                    disabled={checkoutLocked}
-                    onChange={(event) => updateQuantity(entry.product.id, event.target.value)}
-                    className="min-h-10 rounded-lg border border-slate-300 px-2"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="number"
+                      min="0"
+                      step="1"
+                      aria-label={`Số lượng ${entry.product.name}`}
+                      value={quantityDrafts[entry.product.id] ?? entry.quantity}
+                      disabled={checkoutLocked || checkoutUnresolved || pendingCartProducts[entry.product.id]}
+                      onChange={(event) => setQuantityDrafts((current) => ({
+                        ...current,
+                        [entry.product.id]: event.target.value,
+                      }))}
+                      onBlur={(event) => updateQuantity(entry.product.id, event.currentTarget.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.preventDefault();
+                          event.currentTarget.blur();
+                        }
+                      }}
+                      className="min-h-10 w-20 rounded-lg border border-slate-300 px-2"
+                    />
+                    {pendingCartProducts[entry.product.id] ? (
+                      <span role="status" aria-label="Đang kiểm tra tồn kho">
+                        <span aria-hidden="true" className="block h-4 w-4 animate-spin rounded-full border-2 border-emerald-700 border-r-transparent" />
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
               ))}
             </div>
@@ -972,12 +1512,38 @@ export default function ShopPage() {
                   ) : null}
               </div>
             ) : null}
-            {checkoutUnresolved && !checkoutLoading ? (
+            {checkoutUnresolved && !checkoutLoading && !paymentRetryOrderId ? (
               <p role="status" className="rounded-xl bg-amber-50 px-3 py-2 text-sm text-amber-800">
                 Kết quả checkout trước chưa rõ. Hãy thử lại với nội dung đã lưu; không thay đổi giỏ hàng hoặc thông tin giao hàng.
               </p>
             ) : null}
             {checkoutStorageError ? <p role="alert" className="rounded-xl bg-red-50 px-3 py-2 text-sm text-red-700">{checkoutStorageError}</p> : null}
+            <fieldset disabled={checkoutLocked} className="space-y-2 border-t border-slate-100 pt-3">
+              <legend className="text-sm font-semibold text-slate-800">Phương thức thanh toán</legend>
+              {PAYMENT_METHODS.map((method) => (
+                <label
+                  key={method.value}
+                  className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${
+                    paymentMethod === method.value
+                      ? 'border-emerald-700 bg-emerald-50'
+                      : 'border-slate-200'
+                  } ${checkoutLocked ? 'cursor-not-allowed opacity-60' : ''}`}
+                >
+                  <input
+                    type="radio"
+                    name="payment_method"
+                    value={method.value}
+                    checked={paymentMethod === method.value}
+                    onChange={() => setPaymentMethod(method.value)}
+                    className="mt-1 accent-emerald-700"
+                  />
+                  <span>
+                    <span className="block text-sm font-medium text-slate-900">{method.label}</span>
+                    <span className="mt-0.5 block text-xs text-slate-600">{method.description}</span>
+                  </span>
+                </label>
+              ))}
+            </fieldset>
             <div className="space-y-1 border-t border-slate-100 pt-3 text-sm">
               <p>Khoảng cách: {quoteIsCurrent ? `${shippingQuote.distance_km.toLocaleString('vi-VN')} km` : 'Chưa tính'}</p>
               <p>Đơn giá: {formatMoney(quoteIsCurrent ? shippingQuote.shipping_rate : DEFAULT_SHIPPING_RATE)} đ/km</p>
@@ -995,13 +1561,35 @@ export default function ShopPage() {
                 {message}
               </p>
             ) : null}
-            <Button
-              type="submit"
-              className="w-full"
-              disabled={checkoutLoading || shippingLoading || !quoteIsCurrent || cartEntries.length === 0 || !checkoutStateReady || Boolean(checkoutStorageError)}
-            >
-              {checkoutLoading ? 'Đang gửi đơn...' : checkoutUnresolved ? 'Thử lại checkout đang chờ' : 'Tạo đơn hàng'}
-            </Button>
+            {paymentRetryOrderId ? (
+              <Button
+                type="button"
+                className="w-full"
+                disabled={checkoutLoading}
+                onClick={retryPaymentInitialization}
+              >
+                {checkoutLoading
+                  ? 'Đang xử lý...'
+                  : paymentMethod === 'cod'
+                    ? 'Xác nhận thanh toán khi nhận hàng'
+                    : 'Thử lại thanh toán'}
+              </Button>
+            ) : null}
+            {!paymentRetryOrderId ? (
+              <Button
+                type="submit"
+                className="w-full"
+                disabled={checkoutLoading || shippingLoading || cartMutationPending || !quoteIsCurrent || cartEntries.length === 0 || !checkoutStateReady || Boolean(checkoutStorageError)}
+              >
+                {checkoutLoading
+                  ? 'Đang xử lý...'
+                  : checkoutUnresolved
+                    ? 'Thử lại checkout đang chờ'
+                    : paymentMethod === 'cod'
+                      ? 'Đặt hàng'
+                      : 'Đặt đơn & thanh toán'}
+              </Button>
+            ) : null}
           </form>
         </aside>
       </section>
@@ -1016,14 +1604,113 @@ export default function ShopPage() {
                   <p className="font-bold">{order.order_code}</p>
                   <p className="text-sm font-semibold text-emerald-800">{order.status}</p>
                 </div>
-                <p className="mt-1 text-sm text-slate-600">
-                  {order.items.map((item) => `${item.product_name}: ${item.quantity} ${item.unit_price}`).join('; ')}
-                </p>
-                {order.items.some((item) => item.allocated_batches?.length) ? (
-                  <p className="mt-2 text-xs text-slate-500">
-                    Phân bổ FEFO: {order.items.flatMap((item) => item.allocated_batches.map((detail) => `${detail.batch_code} (${detail.quantity})`)).join(', ')}
+                {order.payment_status ? (
+                  <p className="mt-1 text-xs text-slate-600">
+                    Thanh toán: {order.payment_status === 'succeeded'
+                      ? 'Đã thanh toán'
+                      : order.payment_status === 'failed'
+                        ? 'Thất bại'
+                        : 'Đang chờ'}
+                    {order.payment_method === 'mock' ? ' · Demo local' : ''}
+                    {order.payment_method === 'mock' && order.status === 'pending'
+                      ? ' · Chờ Sales xác nhận'
+                      : ''}
                   </p>
                 ) : null}
+                <ul className="mt-2 space-y-2">
+                  {order.items.map((item) => (
+                    <li key={item.id} className="rounded-lg bg-slate-50 p-3">
+                      <p className="text-sm font-medium text-slate-800">
+                        {item.product_name} × {item.quantity}
+                      </p>
+                      {item.allocated_batches?.length ? (
+                        <p className="mt-1 text-xs text-emerald-700">
+                          Lấy từ lô: {item.allocated_batches
+                            .map((detail) => `${detail.batch_code} (${detail.quantity})`)
+                            .join(', ')}
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-xs text-slate-500">
+                          Lô sẽ được phân bổ khi đơn được xác nhận.
+                        </p>
+                      )}
+                      {order.status === 'delivered' ? (
+                        <details className="mt-3 rounded-xl border border-emerald-200 bg-white p-3">
+                          <summary className="cursor-pointer text-sm font-semibold text-emerald-800">
+                            Gửi yêu cầu khiếu nại
+                          </summary>
+                          <form
+                            className="mt-3 space-y-3"
+                            onSubmit={(event) => submitClaim(event, order, item)}
+                          >
+                            <label className="block text-sm font-medium text-slate-700">
+                              Số lượng sản phẩm cần khiếu nại
+                              <input
+                                type="number"
+                                name="claimed_quantity"
+                                min="0.01"
+                                max={Number(item.quantity)}
+                                step="0.01"
+                                defaultValue={item.quantity}
+                                required
+                                className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3"
+                              />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                              Lý do khiếu nại
+                              <select
+                                name="reason"
+                                required
+                                defaultValue=""
+                                className="mt-1 min-h-10 w-full rounded-lg border border-slate-300 px-3"
+                              >
+                                <option value="" disabled>Chọn lý do</option>
+                                <option value="Rau củ bị hư hỏng">Rau củ bị hư hỏng</option>
+                                <option value="Sản phẩm không tươi">Sản phẩm không tươi</option>
+                                <option value="Sai sản phẩm hoặc số lượng">Sai sản phẩm hoặc số lượng</option>
+                                <option value="Khác">Lý do khác</option>
+                              </select>
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                              Mô tả thêm (không bắt buộc)
+                              <textarea
+                                name="description"
+                                rows="3"
+                                maxLength="5000"
+                                className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2"
+                              />
+                            </label>
+                            <label className="block text-sm font-medium text-slate-700">
+                              Ảnh minh chứng (bắt buộc, .jpg hoặc .png, nhỏ hơn 5 MB)
+                              <input
+                                type="file"
+                                name="evidence"
+                                accept=".jpg,.png,image/jpeg,image/png"
+                                required
+                                onChange={(event) => validateClaimFile(event, `${order.id}:${item.id}`)}
+                                className="mt-1 block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-50 file:px-3 file:py-2 file:font-semibold file:text-emerald-800"
+                              />
+                            </label>
+                            {claimMessages[`${order.id}:${item.id}`] ? (
+                              <p
+                                role={claimMessages[`${order.id}:${item.id}`].type === 'error' ? 'alert' : 'status'}
+                                className={`text-sm ${claimMessages[`${order.id}:${item.id}`].type === 'error' ? 'text-red-700' : 'text-emerald-700'}`}
+                              >
+                                {claimMessages[`${order.id}:${item.id}`].text}
+                              </p>
+                            ) : null}
+                            <Button
+                              type="submit"
+                              disabled={claimSubmittingKey !== null}
+                            >
+                              {claimSubmittingKey === `${order.id}:${item.id}` ? 'Đang gửi...' : 'Gửi yêu cầu'}
+                            </Button>
+                          </form>
+                        </details>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
               </article>
             ))}
           </div>

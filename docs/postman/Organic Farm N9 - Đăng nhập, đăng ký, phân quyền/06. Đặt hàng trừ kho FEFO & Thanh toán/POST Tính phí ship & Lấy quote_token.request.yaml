@@ -1,0 +1,29 @@
+$kind: http-request
+url: "{{baseUrl}}/api/v1/shipping/calculate"
+method: POST
+body:
+  type: json
+  content: "{\r
+
+    \  \"delivery_address\": \"65 Huỳnh Thúc Kháng, Quận 1, TP.HCM\"\r
+
+    }"
+auth:
+  type: bearer
+  credentials:
+    token: "{{customerToken}}"
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Tính phí giao hàng & lấy quote_token thành công (200)\", function () {\r
+
+      \    pm.response.to.have.status(200);\r
+
+      \    const res = pm.response.json();\r
+
+      \    const qt = res.data?.quote_token || res.quote_token;\r
+
+      \    pm.collectionVariables.set(\"quote_token\", qt);\r
+
+      });"
+    language: text/javascript
+order: 2613

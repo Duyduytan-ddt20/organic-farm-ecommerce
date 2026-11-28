@@ -32,6 +32,91 @@ class PaymentController extends Controller
         return $this->createPayment($request, 'momo_sandbox');
     }
 
+    public function confirmDemoPayment(Request $request): JsonResponse
+    {
+        if (! app()->environment(['local', 'testing'])) {
+            abort(404);
+        }
+
+        $validated = $request->validate([
+            'order_id' => ['required', 'integer'],
+        ]);
+
+        $payment = DB::transaction(function () use ($request, $validated): Payment {
+            $order = Order::query()
+                ->whereKey($validated['order_id'])
+                ->where('user_id', $request->user()->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            $completedDemoPayment = Payment::query()
+                ->where('order_id', $order->id)
+                ->where('method', 'mock')
+                ->where('status', 'succeeded')
+                ->latest('id')
+                ->first();
+
+            if ($completedDemoPayment) {
+                if (in_array($order->status, ['pending', 'confirmed'], true)) {
+                    return $completedDemoPayment;
+                }
+
+                throw ValidationException::withMessages([
+                    'order_id' => 'Không thể xác nhận demo cho đơn hàng này.',
+                ]);
+            }
+
+            if ($order->status !== 'pending') {
+                throw ValidationException::withMessages([
+                    'order_id' => 'Chỉ có thể thanh toán demo cho đơn hàng đang chờ xử lý.',
+                ]);
+            }
+
+            $pendingPayment = Payment::query()
+                ->where('order_id', $order->id)
+                ->where('status', 'pending')
+                ->lockForUpdate()
+                ->first();
+
+            if ($pendingPayment && $pendingPayment->method !== 'mock') {
+                throw ValidationException::withMessages([
+                    'order_id' => 'Đơn hàng đã có giao dịch thanh toán khác đang chờ xử lý.',
+                ]);
+            }
+
+            $payment = $pendingPayment ?? Payment::query()->forceCreate([
+                'order_id' => $order->id,
+                'subscription_id' => null,
+                'payment_reference' => 'PAY-'.strtoupper(bin2hex(random_bytes(12))),
+                'method' => 'mock',
+                'amount' => $order->total_amount,
+                'status' => 'pending',
+            ]);
+
+            $payment->forceFill([
+                'status' => 'succeeded',
+                'provider_transaction_id' => 'DEMO-'.$payment->payment_reference,
+                'paid_at' => now('UTC'),
+            ])->save();
+
+            return $payment;
+        });
+
+        $payment->refresh();
+        $payment->load('order:id,status');
+
+        return response()->json([
+            'message' => 'Thanh toán mô phỏng thành công. Đơn hàng vẫn chờ Sales xác nhận; không có khoản tiền thật được thu.',
+            'data' => [
+                'payment_reference' => $payment->payment_reference,
+                'payment_status' => $payment->status,
+                'order_id' => $payment->order_id,
+                'order_status' => $payment->order?->status,
+                'amount' => $payment->amount,
+            ],
+        ]);
+    }
+
     public function handleVnpayIpn(Request $request): JsonResponse
     {
         $callback = $this->paymentGatewayService->verifyVnpayIpn($request->all());

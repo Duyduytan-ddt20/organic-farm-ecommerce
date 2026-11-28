@@ -1,0 +1,20 @@
+$kind: http-request
+url: "{{baseUrl}}/api/v1/sales/orders/{{order_id}}/confirm"
+method: POST
+auth:
+  type: bearer
+  credentials:
+    token: "{{salesToken}}"
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Sales xác nhận đơn & phân bổ kho FEFO thành công (200)\", function () {\r
+
+      \    pm.response.to.have.status(200);\r
+
+      \    const res = pm.response.json();\r
+
+      \    pm.expect(res.data.status).to.eql(\"confirmed\");\r
+
+      });"
+    language: text/javascript
+order: 2799

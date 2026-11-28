@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\BatchController;
 use App\Http\Controllers\Api\CategoryController;
 use App\Http\Controllers\Api\ProductController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\ClaimController;
 use App\Http\Controllers\Api\V1\FarmingLogController;
 use App\Http\Controllers\Api\V1\OrderController;
 use App\Http\Controllers\Api\V1\PaymentController;
@@ -37,14 +38,18 @@ Route::prefix('v1')->group(function () {
             ->middleware('role:Customer,Admin');
         Route::post('/payments/momo/create', [PaymentController::class, 'createMomoPayment'])
             ->middleware('role:Customer,Admin');
+        Route::post('/payments/demo/confirm', [PaymentController::class, 'confirmDemoPayment'])
+            ->middleware('role:Customer,Admin');
         Route::get('/payments/{paymentReference}', [PaymentController::class, 'showStatus'])
             ->middleware('role:Customer,Admin');
         Route::middleware('role:Customer,Admin')->post('/shipping/calculate', [ShippingController::class, 'calculate']);
 
         Route::middleware('role:Customer,Admin')->prefix('customer')->group(function () {
             Route::get('/dashboard', [RoleAccessController::class, 'customer']);
+            Route::post('/cart/check-stock', [OrderController::class, 'checkCartStock']);
             Route::get('/orders', [OrderController::class, 'customerIndex']);
             Route::post('/orders', [OrderController::class, 'store']);
+            Route::post('/orders/{order}/claims', [ClaimController::class, 'store']);
         });
 
         Route::middleware('role:Staff,Admin')->prefix('staff')->group(function () {

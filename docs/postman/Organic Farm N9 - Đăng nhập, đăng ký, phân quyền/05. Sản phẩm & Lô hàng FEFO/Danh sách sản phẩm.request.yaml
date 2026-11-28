@@ -1,0 +1,12 @@
+$kind: http-request
+url: "{{baseUrl}}/api/v1/products"
+method: GET
+scripts:
+  - type: afterResponse
+    code: "pm.test(\"Lấy danh sách sản phẩm thành công (200)\", function () {\r
+
+      \    pm.response.to.have.status(200);\r
+
+      });"
+    language: text/javascript
+order: 1000

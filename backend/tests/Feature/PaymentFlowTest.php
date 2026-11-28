@@ -5,9 +5,12 @@ namespace Tests\Feature;
 use App\Models\Batch;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\ShippingQuoteTokenService;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Str;
+use Laravel\Sanctum\PersonalAccessToken;
 use Tests\TestCase;
 
 class PaymentFlowTest extends TestCase
@@ -180,7 +183,7 @@ class PaymentFlowTest extends TestCase
                 'partnerCode' => 'MOMOTEST',
                 'redirectUrl' => 'http://localhost:5173/thanh-toan/ket-qua',
                 'requestId' => $payment['payment_reference'],
-                'requestType' => 'captureWallet',
+                'requestType' => 'payWithATM',
             ];
             $rawSignature = implode('&', array_map(
                 fn (string $key, string $value) => $key.'='.$value,
@@ -225,15 +228,83 @@ class PaymentFlowTest extends TestCase
         $this->assertDatabaseHas('orders', ['id' => $orderId, 'status' => 'confirmed']);
     }
 
+    public function test_local_demo_payment_leaves_paid_order_pending_for_sales_fefo_confirmation(): void
+    {
+        $batch = $this->batch(5);
+        $token = $this->customerToken();
+        $orderId = $this->createOrder($token, 2);
+
+        $response = $this->withToken($token)
+            ->postJson('/api/v1/payments/demo/confirm', ['order_id' => $orderId])
+            ->assertOk()
+            ->assertJsonPath('data.payment_status', 'succeeded')
+            ->assertJsonPath('data.order_status', 'pending');
+        $paymentReference = $response->json('data.payment_reference');
+
+        $this->assertDatabaseHas('payments', [
+            'payment_reference' => $paymentReference,
+            'method' => 'mock',
+            'status' => 'succeeded',
+        ]);
+        $this->assertDatabaseHas('orders', ['id' => $orderId, 'status' => 'pending']);
+        $this->assertDatabaseHas('batches', [
+            'id' => $batch->id,
+            'available_quantity' => '5.00',
+        ]);
+        $this->assertDatabaseCount('order_details', 0);
+
+        $sales = User::factory()->create([
+            'role_id' => Role::query()->where('role_name', 'Sales')->value('id'),
+            'password' => '12345678',
+        ]);
+        $salesToken = $sales->createToken('sales-test')->plainTextToken;
+        app('auth')->forgetGuards();
+        $this->withToken($salesToken)
+            ->getJson('/api/v1/sales/orders')
+            ->assertOk()
+            ->assertJsonPath('data.0.status', 'pending')
+            ->assertJsonPath('data.0.payment_status', 'succeeded')
+            ->assertJsonPath('data.0.payment_method', 'mock');
+
+        app('auth')->forgetGuards();
+        $this->withToken($salesToken)
+            ->postJson('/api/v1/sales/orders/'.$orderId.'/confirm')
+            ->assertOk()
+            ->assertJsonPath('data.status', 'confirmed')
+            ->assertJsonPath('data.payment_status', 'succeeded');
+        $this->assertDatabaseHas('batches', [
+            'id' => $batch->id,
+            'available_quantity' => '3.00',
+        ]);
+        $this->assertDatabaseHas('order_details', [
+            'batch_id' => $batch->id,
+            'quantity' => '2.00',
+        ]);
+
+        app('auth')->forgetGuards();
+        $this->withToken($token)
+            ->postJson('/api/v1/payments/demo/confirm', ['order_id' => $orderId])
+            ->assertOk()
+            ->assertJsonPath('data.payment_reference', $paymentReference);
+
+        $this->assertSame('3.00', number_format((float) $batch->refresh()->available_quantity, 2, '.', ''));
+        $this->assertDatabaseCount('order_details', 1);
+    }
+
     private function createOrder(string $token, int $quantity): int
     {
         $this->batch(10);
 
+        $userId = PersonalAccessToken::findToken($token)->tokenable_id;
+        $quoteToken = app(ShippingQuoteTokenService::class)->issue('Hà Nội', 0, (int) $userId);
+
         return (int) $this->withToken($token)
+            ->withHeader('Idempotency-Key', Str::uuid()->toString())
             ->postJson('/api/v1/customer/orders', [
                 'recipient_name' => 'Khách hàng',
                 'recipient_phone' => '0900000000',
                 'delivery_address' => 'Hà Nội',
+                'quote_token' => $quoteToken,
                 'items' => [['product_id' => 1, 'quantity' => $quantity]],
             ])
             ->assertCreated()
